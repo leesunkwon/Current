@@ -99,7 +99,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.stateDescription
@@ -240,14 +239,7 @@ fun BrowserScreen(controller: BrowserController) {
                         verticalAlignment = Alignment.CenterVertically) {
                         if (selected?.url == null) {
                             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                                Surface(Modifier.size(36.dp), shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.primary) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text("C", modifier = Modifier.clearAndSetSemantics { },
-                                            color = MaterialTheme.colorScheme.onPrimary,
-                                            style = MaterialTheme.typography.titleMedium)
-                                    }
-                                }
+                                CurrentBrandIcon(Modifier.size(36.dp))
                                 Text("Current", modifier = Modifier.weight(1f).padding(start = 10.dp),
                                     style = MaterialTheme.typography.titleLarge,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -643,14 +635,15 @@ private fun NewTabPage(
         .padding(horizontal = 22.dp, vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(40.dp))
-        Surface(Modifier.size(68.dp), shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.primaryContainer) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(if (ui.activeMode == TabMode.PRIVATE) Icons.Filled.Lock else Icons.Filled.Search,
-                    contentDescription = null, modifier = Modifier.size(32.dp),
-                    tint = MaterialTheme.colorScheme.primary)
+        if (ui.activeMode == TabMode.PRIVATE) {
+            Surface(Modifier.size(68.dp), shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.primaryContainer) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(32.dp),
+                        tint = MaterialTheme.colorScheme.primary)
+                }
             }
-        }
+        } else CurrentBrandIcon(Modifier.size(68.dp), RoundedCornerShape(24.dp))
         Spacer(Modifier.height(24.dp))
         Text(if (ui.activeMode == TabMode.PRIVATE) "시크릿으로 탐색하세요" else "무엇을 찾으세요?",
             style = MaterialTheme.typography.headlineLarge, textAlign = TextAlign.Center)

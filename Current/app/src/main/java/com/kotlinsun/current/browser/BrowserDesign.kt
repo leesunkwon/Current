@@ -1,6 +1,7 @@
 package com.kotlinsun.current.browser
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.verticalScroll
@@ -45,11 +46,27 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.kotlinsun.current.R
+
+@Composable
+internal fun CurrentBrandIcon(
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(12.dp),
+) {
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    Image(
+        painter = painterResource(if (dark) R.drawable.current_icon_dark else R.drawable.current_icon_light),
+        contentDescription = null,
+        modifier = modifier.shadow(4.dp, shape).clip(shape)
+            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shape),
+    )
+}
 
 @Composable
 internal fun BrowserGlassSurface(
@@ -90,8 +107,12 @@ internal fun WelcomeScreen(onStart: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically) {
             Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
-                Text("Current", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    style = MaterialTheme.typography.labelLarge)
+                Row(Modifier.padding(start = 6.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    CurrentBrandIcon(Modifier.size(24.dp), RoundedCornerShape(8.dp))
+                    Text("Current", modifier = Modifier.padding(start = 8.dp),
+                        style = MaterialTheme.typography.labelLarge)
+                }
             }
             Text("WEB BROWSER", style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
