@@ -97,6 +97,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
@@ -234,7 +235,8 @@ fun BrowserScreen(controller: BrowserController) {
                 if (ui.page == BrowserPage.WEB && ui.activeMode == TabMode.PRIVATE)
                     MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.background)) {
                 if (ui.page == BrowserPage.WEB) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp,
+                        top = 12.dp, bottom = 16.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         if (selected?.url == null) {
                             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
@@ -246,8 +248,9 @@ fun BrowserScreen(controller: BrowserController) {
                                             style = MaterialTheme.typography.titleMedium)
                                     }
                                 }
-                                Text("Current", modifier = Modifier.padding(start = 10.dp),
-                                    style = MaterialTheme.typography.titleLarge)
+                                Text("Current", modifier = Modifier.weight(1f).padding(start = 10.dp),
+                                    style = MaterialTheme.typography.titleLarge,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 if (ui.activeMode == TabMode.PRIVATE) {
                                     Surface(modifier = Modifier.padding(start = 10.dp), shape = CircleShape,
                                         color = MaterialTheme.colorScheme.primaryContainer) {
@@ -263,6 +266,7 @@ fun BrowserScreen(controller: BrowserController) {
                                 controller::clearSuggestions,
                                 modifier = Modifier.weight(1f))
                         }
+                        Spacer(Modifier.width(16.dp))
                         BrowserMenu(ui, controller, menu, onExpandedChange = { expanded ->
                             if (expanded) {
                                 focus.clearFocus()
@@ -276,7 +280,8 @@ fun BrowserScreen(controller: BrowserController) {
                         progress = { selected.engine.progress / 100f },
                         modifier = Modifier.fillMaxWidth().height(2.dp))
                 } else {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp,
+                        top = 12.dp, bottom = 16.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { controller.showPage(BrowserPage.WEB) },
                             modifier = Modifier.size(48.dp)) {
@@ -311,7 +316,7 @@ fun BrowserScreen(controller: BrowserController) {
                         BrowserAddressField(ui, address, editing, invalidAddress,
                             onAddressChange, onAddressFocus, submitAddress, useSuggestion,
                             controller::clearSuggestions,
-                            modifier = Modifier.fillMaxWidth())
+                            modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth())
                     })
                 selected != null -> {
                     val session = controller.sessionForSelectedTab()
@@ -382,10 +387,14 @@ private fun BrowserAddressField(
                 },
                 trailingIcon = {
                     if (isHome || editing) IconButton(onClick = onSubmit,
-                        modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.primary, CircleShape)) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = "주소 또는 검색어 열기",
-                            tint = MaterialTheme.colorScheme.onPrimary)
+                        modifier = Modifier.size(48.dp)) {
+                        Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
+                            contentAlignment = Alignment.Center) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "주소 또는 검색어 열기",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onPrimary)
+                        }
                     }
                 },
                 shape = CircleShape,
@@ -403,6 +412,7 @@ private fun BrowserAddressField(
         }
         DropdownMenu(expanded = editing && ui.suggestions.isNotEmpty(),
             onDismissRequest = onDismissSuggestions,
+            offset = DpOffset(0.dp, 8.dp),
             modifier = Modifier.widthIn(max = 360.dp),
             shape = RoundedCornerShape(24.dp),
             containerColor = MaterialTheme.colorScheme.surface,
@@ -566,14 +576,17 @@ private fun BrowserMenuItem(label: String, icon: ImageVector, onClick: () -> Uni
 @Composable
 private fun BrowserBottomBar(ui: BrowserUiState, controller: BrowserController) {
     val selected = ui.selectedTab
-    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(top = 8.dp, bottom = 10.dp),
+    val compact = LocalConfiguration.current.screenWidthDp < 320
+    Box(Modifier.fillMaxWidth().navigationBarsPadding()
+        .padding(horizontal = if (compact) 8.dp else 16.dp, top = 12.dp, bottom = 12.dp),
         contentAlignment = Alignment.Center) {
         Surface(shape = CircleShape,
             color = if (ui.activeMode == TabMode.PRIVATE) Color(0xFF363636) else BrowserNavigation,
             contentColor = Color.White,
             border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
             shadowElevation = 16.dp) {
-            Row(Modifier.padding(7.dp), horizontalArrangement = Arrangement.spacedBy(3.dp),
+            Row(Modifier.padding(if (compact) 6.dp else 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 6.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = controller::goBack,
                     enabled = selected?.engine?.canGoBack == true, modifier = Modifier.size(48.dp)) {
