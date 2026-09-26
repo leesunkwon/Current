@@ -230,9 +230,13 @@ fun BrowserScreen(controller: BrowserController) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            Column(Modifier.statusBarsPadding().background(
-                if (ui.page == BrowserPage.WEB && ui.activeMode == TabMode.PRIVATE)
-                    MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.background)) {
+            val barBackground = when {
+                ui.page != BrowserPage.WEB -> MaterialTheme.colorScheme.background
+                ui.activeMode == TabMode.PRIVATE ->
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f)
+                else -> Color.Transparent
+            }
+            Column(Modifier.background(barBackground).statusBarsPadding()) {
                 if (ui.page == BrowserPage.WEB) {
                     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp,
                         top = 12.dp, bottom = 16.dp),
@@ -289,7 +293,9 @@ fun BrowserScreen(controller: BrowserController) {
             if (ui.page == BrowserPage.WEB && !editing) BrowserBottomBar(ui, controller)
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        val contentModifier = if (ui.page == BrowserPage.WEB) Modifier.fillMaxSize()
+            else Modifier.fillMaxSize().padding(padding)
+        Box(contentModifier) {
             when {
                 !ui.ready -> Column(Modifier.align(Alignment.Center).padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
@@ -304,7 +310,7 @@ fun BrowserScreen(controller: BrowserController) {
                 ui.page == BrowserPage.SITE_INFO -> SiteInfoScreen(ui)
                 ui.page == BrowserPage.SETTINGS -> SettingsScreen(ui, controller)
                 selected?.url == null && controller.sessionForSelectedTab() == null -> NewTabPage(
-                    ui, controller, addressField = {
+                    ui, controller, chromePadding = padding, addressField = {
                         BrowserAddressField(ui, address, editing, invalidAddress,
                             onAddressChange, onAddressFocus, submitAddress, useSuggestion,
                             controller::clearSuggestions,
@@ -631,10 +637,13 @@ private fun BrowserPage.label(): String = when (this) {
 private fun NewTabPage(
     ui: BrowserUiState,
     controller: BrowserController,
+    chromePadding: PaddingValues,
     addressField: @Composable () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-        .padding(horizontal = 22.dp, vertical = 20.dp),
+        .padding(start = 22.dp, end = 22.dp,
+            top = chromePadding.calculateTopPadding() + 20.dp,
+            bottom = chromePadding.calculateBottomPadding() + 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(40.dp))
         if (ui.activeMode == TabMode.PRIVATE) {
