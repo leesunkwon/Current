@@ -569,8 +569,10 @@ private fun BrowserMenuItem(label: String, icon: ImageVector, onClick: () -> Uni
 private fun BrowserBottomBar(ui: BrowserUiState, controller: BrowserController) {
     val selected = ui.selectedTab
     val compact = LocalConfiguration.current.screenWidthDp < 320
+    val horizontalPadding = if (compact) 8.dp else 16.dp
     Box(Modifier.fillMaxWidth().navigationBarsPadding()
-        .padding(horizontal = if (compact) 8.dp else 16.dp, top = 12.dp, bottom = 12.dp),
+        .padding(start = horizontalPadding, top = 12.dp,
+            end = horizontalPadding, bottom = 12.dp),
         contentAlignment = Alignment.Center) {
         Surface(shape = CircleShape,
             color = if (ui.activeMode == TabMode.PRIVATE) Color(0xFF363636) else BrowserNavigation,
