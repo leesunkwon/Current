@@ -3,6 +3,7 @@ package com.kotlinsun.current.browser
 import android.app.DownloadManager
 import android.graphics.BitmapFactory
 import android.view.ViewGroup
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -25,6 +26,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -35,9 +38,17 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
@@ -75,6 +86,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
@@ -85,8 +99,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import com.kotlinsun.current.data.BookmarkRecord
 import com.kotlinsun.current.engine.JavaScriptDialogKind
 import com.kotlinsun.current.engine.TabMode
@@ -105,6 +123,10 @@ fun BrowserScreen(controller: BrowserController) {
     var invalidAddress by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
+
+    LaunchedEffect(ui.page, ui.selectedId, ui.activeMode, ui.showOnboarding) {
+        menu = false
+    }
 
     LaunchedEffect(selected?.id, selected?.url, editing) {
         if (!editing) address = TextFieldValue(selected?.url?.let(AddressResolver::displayUrl).orEmpty())
@@ -152,6 +174,9 @@ fun BrowserScreen(controller: BrowserController) {
     ui.dialog?.let { BrowserDialogView(it, controller) }
     ui.linkTarget?.let { target ->
         AlertDialog(onDismissRequest = controller::dismissLinkMenu,
+            shape = RoundedCornerShape(28.dp),
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+            tonalElevation = 0.dp,
             title = { Text(if (target.imageUrl != null) "이미지·링크" else "링크") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
@@ -180,7 +205,11 @@ fun BrowserScreen(controller: BrowserController) {
                 modifier = Modifier.heightIn(min = 48.dp)) { Text("닫기") } })
     }
     ui.pendingExternalUrl?.let { url ->
-        AlertDialog(onDismissRequest = controller::dismissExternal, title = { Text("외부 앱 열기") },
+        AlertDialog(onDismissRequest = controller::dismissExternal,
+            shape = RoundedCornerShape(28.dp),
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+            tonalElevation = 0.dp,
+            title = { Text("외부 앱 열기") },
             text = { Text(url) },
             confirmButton = { TextButton(onClick = controller::confirmExternal,
                 modifier = Modifier.heightIn(min = 48.dp)) { Text("열기") } },
@@ -233,7 +262,14 @@ fun BrowserScreen(controller: BrowserController) {
                                 controller::clearSuggestions,
                                 modifier = Modifier.weight(1f))
                         }
-                        BrowserMenu(ui, controller, menu, onExpandedChange = { menu = it })
+                        BrowserMenu(ui, controller, menu, onExpandedChange = { expanded ->
+                            if (expanded) {
+                                focus.clearFocus()
+                                editing = false
+                                controller.clearSuggestions()
+                            }
+                            menu = expanded
+                        })
                     }
                     if (selected?.engine?.isLoading == true) LinearProgressIndicator(
                         progress = { selected.engine.progress / 100f },
@@ -327,40 +363,51 @@ private fun BrowserAddressField(
 ) {
     val isHome = ui.selectedTab?.url == null
     Box(modifier) {
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth().onFocusChanged { onFocusChange(it.isFocused) }
-                .semantics { contentDescription = "주소 또는 검색어 입력" },
-            singleLine = true,
-            isError = isError,
-            placeholder = { Text("주소 또는 검색어") },
-            leadingIcon = {
-                Icon(if (isHome || editing) Icons.Filled.Search else if (
-                    ui.selectedTab?.url?.startsWith("https://", true) == true) Icons.Filled.Lock
-                else Icons.Filled.Language, contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            },
-            trailingIcon = {
-                if (isHome || editing) IconButton(onClick = onSubmit,
-                    modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.primary, CircleShape)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "주소 또는 검색어 열기",
-                        tint = MaterialTheme.colorScheme.onPrimary)
-                }
-            },
-            shape = CircleShape,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = MaterialTheme.colorScheme.surface,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-            ),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-            keyboardActions = KeyboardActions(onGo = { onSubmit() }),
-        )
+        BrowserGlassSurface(Modifier.fillMaxWidth(), shape = CircleShape,
+            focused = editing, error = isError) {
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.fillMaxWidth().onFocusChanged { onFocusChange(it.isFocused) }
+                    .semantics { contentDescription = "주소 또는 검색어 입력" },
+                singleLine = true,
+                isError = isError,
+                placeholder = { Text("주소 또는 검색어") },
+                leadingIcon = {
+                    Icon(if (isHome || editing) Icons.Filled.Search else if (
+                        ui.selectedTab?.url?.startsWith("https://", true) == true) Icons.Filled.Lock
+                    else Icons.Filled.Language, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                },
+                trailingIcon = {
+                    if (isHome || editing) IconButton(onClick = onSubmit,
+                        modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.primary, CircleShape)) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "주소 또는 검색어 열기",
+                            tint = MaterialTheme.colorScheme.onPrimary)
+                    }
+                },
+                shape = CircleShape,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    errorContainerColor = Color.Transparent,
+                    focusedBorderColor = Color.Transparent,
+                    unfocusedBorderColor = Color.Transparent,
+                    errorBorderColor = Color.Transparent,
+                ),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                keyboardActions = KeyboardActions(onGo = { onSubmit() }),
+            )
+        }
         DropdownMenu(expanded = editing && ui.suggestions.isNotEmpty(),
-            onDismissRequest = onDismissSuggestions) {
+            onDismissRequest = onDismissSuggestions,
+            modifier = Modifier.widthIn(max = 360.dp),
+            shape = RoundedCornerShape(24.dp),
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+            tonalElevation = 0.dp,
+            shadowElevation = 16.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
             ui.suggestions.forEach { suggestion ->
                 DropdownMenuItem(
                     text = {
@@ -371,6 +418,10 @@ private fun BrowserAddressField(
                             Text(suggestion.url, style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                         }
+                    },
+                    leadingIcon = {
+                        Icon(Icons.Filled.Search, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary)
                     },
                     modifier = Modifier.semantics {
                         contentDescription = "${suggestion.source}, ${suggestion.title}, ${suggestion.url}"
@@ -389,44 +440,125 @@ private fun BrowserMenu(
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
 ) {
+    BackHandler(enabled = expanded) { onExpandedChange(false) }
+    val configuration = LocalConfiguration.current
+    val menuWidth = (configuration.screenWidthDp - 48).coerceIn(1, 336).dp
+    val menuHeight = (configuration.screenHeightDp - 150).coerceIn(1, 600).dp
+    val popupOffset = with(LocalDensity.current) { 56.dp.roundToPx() }
+    fun perform(action: () -> Unit) {
+        onExpandedChange(false)
+        action()
+    }
     Box {
-        IconButton(onClick = { onExpandedChange(true) }, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Filled.MoreVert, contentDescription = "브라우저 메뉴")
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { onExpandedChange(false) }) {
-            val actions = listOf(
-                "현재 페이지 북마크" to null,
-                "현재 주소 복사" to BrowserPage.WEB,
-                "현재 페이지 공유" to BrowserPage.WEB,
-                "현재 페이지 인쇄" to BrowserPage.WEB,
-                "방문 기록" to BrowserPage.HISTORY,
-                "북마크" to BrowserPage.BOOKMARKS,
-                "다운로드" to BrowserPage.DOWNLOADS,
-                "사이트 정보" to BrowserPage.SITE_INFO,
-                "개인정보" to BrowserPage.PRIVACY,
-                "설정" to BrowserPage.SETTINGS,
-            )
-            actions.filter { (label, page) ->
-                (ui.selectedTab?.url != null || !label.startsWith("현재") && page != BrowserPage.SITE_INFO) &&
-                    (ui.activeMode == TabMode.NORMAL ||
-                        page != BrowserPage.HISTORY && page != BrowserPage.DOWNLOADS)
-            }.forEach { (label, page) ->
-                DropdownMenuItem(text = { Text(label) }, onClick = {
-                    onExpandedChange(false)
-                    when (label) {
-                        "현재 페이지 북마크" -> controller.saveCurrentBookmark()
-                        "현재 주소 복사" -> controller.copyCurrentPage()
-                        "현재 페이지 공유" -> controller.shareCurrentPage()
-                        "현재 페이지 인쇄" -> controller.printCurrentPage()
-                        else -> page?.let(controller::showPage)
-                    }
-                })
+        BrowserGlassSurface(Modifier.size(48.dp), shape = CircleShape) {
+            IconButton(onClick = { onExpandedChange(true) }, modifier = Modifier.fillMaxSize()) {
+                Icon(Icons.Filled.MoreVert, contentDescription = "브라우저 메뉴")
             }
-            if (ui.privateAvailable) DropdownMenuItem(text = { Text("새 시크릿 탭") }, onClick = {
-                onExpandedChange(false)
-                controller.newTab(mode = TabMode.PRIVATE)
-            })
         }
+        if (expanded) Popup(
+            alignment = Alignment.TopEnd,
+            offset = IntOffset(0, popupOffset),
+            onDismissRequest = { onExpandedChange(false) },
+            properties = PopupProperties(focusable = true,
+                dismissOnBackPress = true, dismissOnClickOutside = true),
+        ) {
+            Box(Modifier.padding(10.dp)) {
+                BrowserGlassSurface(Modifier.width(menuWidth).heightIn(max = menuHeight)
+                    .semantics { paneTitle = "브라우저 메뉴" },
+                    shape = RoundedCornerShape(28.dp), strong = true) {
+                    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(14.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                                Text("CURRENT", style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary)
+                                Text("브라우저 메뉴", style = MaterialTheme.typography.titleMedium)
+                            }
+                            IconButton(onClick = { onExpandedChange(false) }, modifier = Modifier.size(48.dp)) {
+                                Icon(Icons.Filled.Close, contentDescription = "메뉴 닫기")
+                            }
+                        }
+                        ui.selectedTab?.url?.let { url ->
+                            val bookmarked = ui.bookmarks.any { it.url == url }
+                            Text(AddressResolver.displayUrl(url),
+                                modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 4.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            BrowserMenuSection("현재 페이지")
+                            BrowserMenuItem(if (bookmarked) "북마크에서 삭제" else "북마크에 저장",
+                                Icons.Filled.BookmarkBorder) {
+                                perform(controller::saveCurrentBookmark)
+                            }
+                            BrowserMenuItem("현재 주소 복사", Icons.Filled.ContentCopy) {
+                                perform(controller::copyCurrentPage)
+                            }
+                            BrowserMenuItem("현재 페이지 공유", Icons.Filled.Share) {
+                                perform(controller::shareCurrentPage)
+                            }
+                            BrowserMenuItem("현재 페이지 인쇄", Icons.Filled.Print) {
+                                perform(controller::printCurrentPage)
+                            }
+                        }
+                        BrowserMenuSection("보관함")
+                        if (ui.activeMode == TabMode.NORMAL) {
+                            BrowserMenuItem("방문 기록", Icons.Filled.History) {
+                                perform { controller.showPage(BrowserPage.HISTORY) }
+                            }
+                        }
+                        BrowserMenuItem("북마크", Icons.Filled.BookmarkBorder) {
+                            perform { controller.showPage(BrowserPage.BOOKMARKS) }
+                        }
+                        if (ui.activeMode == TabMode.NORMAL) {
+                            BrowserMenuItem("다운로드", Icons.Filled.FileDownload) {
+                                perform { controller.showPage(BrowserPage.DOWNLOADS) }
+                            }
+                        }
+                        if (ui.selectedTab?.url != null) {
+                            BrowserMenuItem("사이트 정보", Icons.Filled.Info) {
+                                perform { controller.showPage(BrowserPage.SITE_INFO) }
+                            }
+                        }
+                        BrowserMenuSection("브라우저")
+                        BrowserMenuItem("개인정보", Icons.Filled.Security) {
+                            perform { controller.showPage(BrowserPage.PRIVACY) }
+                        }
+                        BrowserMenuItem("설정", Icons.Filled.Settings) {
+                            perform { controller.showPage(BrowserPage.SETTINGS) }
+                        }
+                        if (ui.privateAvailable) {
+                            BrowserMenuItem("새 시크릿 탭", Icons.Filled.Lock) {
+                                perform { controller.newTab(mode = TabMode.PRIVATE) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BrowserMenuSection(title: String) {
+    Text(title, modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+private fun BrowserMenuItem(label: String, icon: ImageVector, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 54.dp).clip(RoundedCornerShape(16.dp))
+        .clickable(onClickLabel = label, onClick = onClick)
+        .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(38.dp).background(MaterialTheme.colorScheme.primaryContainer,
+            RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.primary)
+        }
+        Text(label, modifier = Modifier.weight(1f).padding(start = 12.dp),
+            style = MaterialTheme.typography.bodyMedium)
+        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null,
+            modifier = Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -834,7 +966,11 @@ private fun BookmarkScreen(ui: BrowserUiState, controller: BrowserController) {
     var title by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
     editing?.let { item ->
-        AlertDialog(onDismissRequest = { editing = null }, title = { Text("북마크 수정") },
+        AlertDialog(onDismissRequest = { editing = null },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+            tonalElevation = 0.dp,
+            title = { Text("북마크 수정") },
             text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(title, { title = it }, label = { Text("제목") },
                     modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp))
@@ -1065,6 +1201,9 @@ private fun BrowserDialogView(dialog: BrowserDialog, controller: BrowserControll
         BrowserDialog.ClearSiteData -> "사이트 데이터 삭제"
     }
     AlertDialog(onDismissRequest = controller::cancelDialog,
+        shape = RoundedCornerShape(28.dp),
+        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+        tonalElevation = 0.dp,
         title = { Text(title) },
         text = {
             when (dialog) {
