@@ -24,3 +24,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "Current"
 include(":app")
+include(":core:browser-engine")
+include(":core:engine-webview")
