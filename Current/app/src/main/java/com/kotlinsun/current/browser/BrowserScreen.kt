@@ -230,76 +230,45 @@ fun BrowserScreen(controller: BrowserController) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            Column(Modifier.background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
+            Column(Modifier.background(MaterialTheme.colorScheme.surface).statusBarsPadding()) {
                 if (ui.page == BrowserPage.WEB) {
-                    val tabPosition = ui.visibleTabs.indexOfFirst { it.id == selected?.id } + 1
-                    Surface(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                        shape = RoundedCornerShape(26.dp),
-                        color = if (ui.activeMode == TabMode.PRIVATE)
-                            MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface,
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                        shadowElevation = 14.dp,
-                        tonalElevation = 0.dp,
-                    ) {
-                        Column {
-                            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                                .clickable(onClickLabel = "탭 목록 열기") {
-                                    controller.showPage(BrowserPage.TABS)
-                                }
-                                .padding(start = 16.dp, end = 14.dp, top = 8.dp, bottom = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        if (selected?.url == null) {
+                            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                                 if (ui.activeMode == TabMode.PRIVATE) {
                                     Icon(Icons.Filled.Lock, contentDescription = null,
-                                        modifier = Modifier.size(20.dp))
-                                } else CurrentBrandIcon(Modifier.size(20.dp), RoundedCornerShape(6.dp))
-                                Text(selected?.title?.takeIf { it.isNotBlank() } ?: "새 탭",
-                                    modifier = Modifier.weight(1f).padding(start = 10.dp, end = 8.dp),
-                                    style = MaterialTheme.typography.labelLarge,
+                                        modifier = Modifier.size(28.dp))
+                                } else CurrentBrandIcon(Modifier.size(28.dp), RoundedCornerShape(6.dp))
+                                Text(if (ui.activeMode == TabMode.PRIVATE) "시크릿 탭" else "Current",
+                                    modifier = Modifier.weight(1f).padding(start = 10.dp),
+                                    style = MaterialTheme.typography.titleMedium,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Surface(shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.surfaceVariant) {
-                                    Text(if (ui.activeMode == TabMode.PRIVATE) "시크릿" else
-                                        "탭 ${tabPosition.coerceAtLeast(1)}/${ui.visibleTabs.size.coerceAtLeast(1)}",
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
                             }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
-                            Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp,
-                                top = 8.dp, bottom = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically) {
-                                if (selected?.url == null) {
-                                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                                        CurrentBrandIcon(Modifier.size(36.dp))
-                                        Text("Current", modifier = Modifier.weight(1f).padding(start = 10.dp),
-                                            style = MaterialTheme.typography.titleLarge,
-                                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    }
-                                } else {
-                                    BrowserAddressField(ui, address, editing, invalidAddress,
-                                        onAddressChange, onAddressFocus, submitAddress, useSuggestion,
-                                        controller::clearSuggestions,
-                                        modifier = Modifier.weight(1f))
-                                }
-                                Spacer(Modifier.width(10.dp))
-                                BrowserMenu(ui, controller, menu, onExpandedChange = { expanded ->
-                                    if (expanded) {
-                                        focus.clearFocus()
-                                        editing = false
-                                        controller.clearSuggestions()
-                                    }
-                                    menu = expanded
-                                })
+                        } else {
+                            if (ui.activeMode == TabMode.PRIVATE) {
+                                Icon(Icons.Filled.Lock, contentDescription = "시크릿 탭",
+                                    modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
                             }
-                            if (selected?.engine?.isLoading == true) LinearProgressIndicator(
-                                progress = { selected.engine.progress / 100f },
-                                modifier = Modifier.fillMaxWidth().height(2.dp))
+                            BrowserAddressField(ui, address, editing, invalidAddress,
+                                onAddressChange, onAddressFocus, submitAddress, useSuggestion,
+                                controller::clearSuggestions,
+                                modifier = Modifier.weight(1f), flat = true)
                         }
+                        Spacer(Modifier.width(8.dp))
+                        BrowserMenu(ui, controller, menu, onExpandedChange = { expanded ->
+                            if (expanded) {
+                                focus.clearFocus()
+                                editing = false
+                                controller.clearSuggestions()
+                            }
+                            menu = expanded
+                        })
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
+                    if (selected?.engine?.isLoading == true) LinearProgressIndicator(
+                        progress = { selected.engine.progress / 100f },
+                        modifier = Modifier.fillMaxWidth().height(2.dp))
                 } else {
                     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp,
                         top = 12.dp, bottom = 16.dp),
@@ -312,13 +281,14 @@ fun BrowserScreen(controller: BrowserController) {
                             style = MaterialTheme.typography.titleLarge)
                     }
                 }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
             }
         },
         bottomBar = {
             if (ui.page == BrowserPage.WEB && !editing) BrowserBottomBar(ui, controller)
         },
     ) { padding ->
-        // The tab card has its own space; only the floating bottom bar overlays web content.
+        // The top toolbar has its own space; only the floating bottom bar overlays web content.
         val contentModifier = if (ui.page == BrowserPage.WEB)
             Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())
             else Modifier.fillMaxSize().padding(padding)
@@ -391,28 +361,33 @@ private fun BrowserAddressField(
     onSuggestion: (AddressSuggestion) -> Unit,
     onDismissSuggestions: () -> Unit,
     modifier: Modifier = Modifier,
+    flat: Boolean = false,
 ) {
     val isHome = ui.selectedTab?.url == null
-    Box(modifier) {
-        BrowserGlassSurface(Modifier.fillMaxWidth(), shape = CircleShape,
-            focused = editing, error = isError) {
-            OutlinedTextField(
-                value = value,
-                onValueChange = onValueChange,
-                modifier = Modifier.fillMaxWidth().onFocusChanged { onFocusChange(it.isFocused) }
-                    .semantics { contentDescription = "주소 또는 검색어 입력" },
-                singleLine = true,
-                isError = isError,
-                placeholder = { Text("주소 또는 검색어") },
-                leadingIcon = {
-                    Icon(if (isError) Icons.Filled.ErrorOutline else if (isHome || editing) Icons.Filled.Search else if (
-                        ui.selectedTab?.url?.startsWith("https://", true) == true) Icons.Filled.Lock
-                    else Icons.Filled.Language, contentDescription = if (isError) "주소 입력 오류" else null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                },
-                trailingIcon = {
-                    if (isHome || editing) IconButton(onClick = onSubmit,
-                        modifier = Modifier.size(48.dp)) {
+    val fieldShape = if (flat) RoundedCornerShape(6.dp) else CircleShape
+    val addressInput: @Composable () -> Unit = {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.fillMaxWidth().onFocusChanged { onFocusChange(it.isFocused) }
+                .semantics { contentDescription = "주소 또는 검색어 입력" },
+            singleLine = true,
+            isError = isError,
+            placeholder = { Text("주소 또는 검색어") },
+            leadingIcon = {
+                Icon(if (isError) Icons.Filled.ErrorOutline else if (isHome || editing) Icons.Filled.Search else if (
+                    ui.selectedTab?.url?.startsWith("https://", true) == true) Icons.Filled.Lock
+                else Icons.Filled.Language, contentDescription = if (isError) "주소 입력 오류" else null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            },
+            trailingIcon = {
+                if (isHome || editing) IconButton(onClick = onSubmit,
+                    modifier = Modifier.size(48.dp)) {
+                    if (flat) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "주소 또는 검색어 열기",
+                            modifier = Modifier.size(22.dp))
+                    } else {
                         Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
                             contentAlignment = Alignment.Center) {
                             Icon(Icons.AutoMirrored.Filled.ArrowForward,
@@ -421,25 +396,41 @@ private fun BrowserAddressField(
                                 tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
-                },
-                shape = CircleShape,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    errorContainerColor = Color.Transparent,
-                    focusedBorderColor = Color.Transparent,
-                    unfocusedBorderColor = Color.Transparent,
-                    errorBorderColor = Color.Transparent,
-                ),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                keyboardActions = KeyboardActions(onGo = { onSubmit() }),
-            )
+                }
+            },
+            shape = fieldShape,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = Color.Transparent,
+                unfocusedContainerColor = Color.Transparent,
+                errorContainerColor = Color.Transparent,
+                focusedBorderColor = Color.Transparent,
+                unfocusedBorderColor = Color.Transparent,
+                errorBorderColor = Color.Transparent,
+            ),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+            keyboardActions = KeyboardActions(onGo = { onSubmit() }),
+        )
+    }
+    Box(modifier) {
+        if (flat) {
+            val stroke = when {
+                isError -> MaterialTheme.colorScheme.error
+                editing -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.outline
+            }
+            Surface(Modifier.fillMaxWidth(), shape = fieldShape,
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                border = BorderStroke(if (isError) 2.dp else 1.dp, stroke),
+                tonalElevation = 0.dp) { addressInput() }
+        } else {
+            BrowserGlassSurface(Modifier.fillMaxWidth(), shape = fieldShape,
+                focused = editing, error = isError) { addressInput() }
         }
         DropdownMenu(expanded = editing && ui.suggestions.isNotEmpty(),
             onDismissRequest = onDismissSuggestions,
             offset = DpOffset(0.dp, 8.dp),
             modifier = Modifier.widthIn(max = 360.dp),
-            shape = RoundedCornerShape(24.dp),
+            shape = if (flat) RoundedCornerShape(8.dp) else RoundedCornerShape(24.dp),
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
             shadowElevation = 16.dp,
@@ -486,10 +477,8 @@ private fun BrowserMenu(
         action()
     }
     Box {
-        BrowserGlassSurface(Modifier.size(48.dp), shape = CircleShape) {
-            IconButton(onClick = { onExpandedChange(true) }, modifier = Modifier.fillMaxSize()) {
-                Icon(Icons.Filled.MoreVert, contentDescription = "브라우저 메뉴")
-            }
+        IconButton(onClick = { onExpandedChange(true) }, modifier = Modifier.size(48.dp)) {
+            Icon(Icons.Filled.MoreVert, contentDescription = "브라우저 메뉴")
         }
         if (expanded) Popup(
             alignment = Alignment.TopEnd,
@@ -499,9 +488,13 @@ private fun BrowserMenu(
                 dismissOnBackPress = true, dismissOnClickOutside = true),
         ) {
             Box(Modifier.padding(10.dp)) {
-                BrowserGlassSurface(Modifier.width(menuWidth).heightIn(max = menuHeight)
+                Surface(Modifier.width(menuWidth).heightIn(max = menuHeight)
                     .semantics { paneTitle = "브라우저 메뉴" },
-                    shape = RoundedCornerShape(28.dp), strong = true) {
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    shadowElevation = 12.dp,
+                    tonalElevation = 0.dp) {
                     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(14.dp)) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f).padding(start = 8.dp)) {
@@ -582,12 +575,12 @@ private fun BrowserMenuSection(title: String) {
 
 @Composable
 private fun BrowserMenuItem(label: String, icon: ImageVector, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 54.dp).clip(RoundedCornerShape(16.dp))
+    Row(Modifier.fillMaxWidth().heightIn(min = 54.dp).clip(RoundedCornerShape(8.dp))
         .clickable(onClickLabel = label, onClick = onClick)
         .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(38.dp).background(MaterialTheme.colorScheme.primaryContainer,
-            RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+            RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colorScheme.primary)
         }
