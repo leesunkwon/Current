@@ -230,51 +230,76 @@ fun BrowserScreen(controller: BrowserController) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            val barBackground = when {
-                ui.page != BrowserPage.WEB -> MaterialTheme.colorScheme.background
-                ui.activeMode == TabMode.PRIVATE ->
-                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f)
-                else -> Color.Transparent
-            }
-            Column(Modifier.background(barBackground).statusBarsPadding()) {
+            Column(Modifier.background(if (ui.page == BrowserPage.WEB) Color.Transparent
+                else MaterialTheme.colorScheme.background).statusBarsPadding()) {
                 if (ui.page == BrowserPage.WEB) {
-                    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp,
-                        top = 12.dp, bottom = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        if (selected?.url == null) {
-                            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                                CurrentBrandIcon(Modifier.size(36.dp))
-                                Text("Current", modifier = Modifier.weight(1f).padding(start = 10.dp),
-                                    style = MaterialTheme.typography.titleLarge,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val tabPosition = ui.visibleTabs.indexOfFirst { it.id == selected?.id } + 1
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                        shape = RoundedCornerShape(26.dp),
+                        color = if (ui.activeMode == TabMode.PRIVATE)
+                            MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                        shadowElevation = 14.dp,
+                        tonalElevation = 0.dp,
+                    ) {
+                        Column {
+                            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                .clickable(onClickLabel = "탭 목록 열기") {
+                                    controller.showPage(BrowserPage.TABS)
+                                }
+                                .padding(start = 16.dp, end = 14.dp, top = 8.dp, bottom = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
                                 if (ui.activeMode == TabMode.PRIVATE) {
-                                    Surface(modifier = Modifier.padding(start = 10.dp), shape = CircleShape,
-                                        color = MaterialTheme.colorScheme.primaryContainer) {
-                                        Text("시크릿", modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.primary)
-                                    }
+                                    Icon(Icons.Filled.Lock, contentDescription = null,
+                                        modifier = Modifier.size(20.dp))
+                                } else CurrentBrandIcon(Modifier.size(20.dp), RoundedCornerShape(6.dp))
+                                Text(selected?.title?.takeIf { it.isNotBlank() } ?: "새 탭",
+                                    modifier = Modifier.weight(1f).padding(start = 10.dp, end = 8.dp),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Surface(shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.surfaceVariant) {
+                                    Text(if (ui.activeMode == TabMode.PRIVATE) "시크릿" else
+                                        "탭 ${tabPosition.coerceAtLeast(1)}/${ui.visibleTabs.size.coerceAtLeast(1)}",
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
-                        } else {
-                            BrowserAddressField(ui, address, editing, invalidAddress,
-                                onAddressChange, onAddressFocus, submitAddress, useSuggestion,
-                                controller::clearSuggestions,
-                                modifier = Modifier.weight(1f))
-                        }
-                        Spacer(Modifier.width(16.dp))
-                        BrowserMenu(ui, controller, menu, onExpandedChange = { expanded ->
-                            if (expanded) {
-                                focus.clearFocus()
-                                editing = false
-                                controller.clearSuggestions()
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
+                            Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp,
+                                top = 8.dp, bottom = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                if (selected?.url == null) {
+                                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                                        CurrentBrandIcon(Modifier.size(36.dp))
+                                        Text("Current", modifier = Modifier.weight(1f).padding(start = 10.dp),
+                                            style = MaterialTheme.typography.titleLarge,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                } else {
+                                    BrowserAddressField(ui, address, editing, invalidAddress,
+                                        onAddressChange, onAddressFocus, submitAddress, useSuggestion,
+                                        controller::clearSuggestions,
+                                        modifier = Modifier.weight(1f))
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                BrowserMenu(ui, controller, menu, onExpandedChange = { expanded ->
+                                    if (expanded) {
+                                        focus.clearFocus()
+                                        editing = false
+                                        controller.clearSuggestions()
+                                    }
+                                    menu = expanded
+                                })
                             }
-                            menu = expanded
-                        })
+                            if (selected?.engine?.isLoading == true) LinearProgressIndicator(
+                                progress = { selected.engine.progress / 100f },
+                                modifier = Modifier.fillMaxWidth().height(2.dp))
+                        }
                     }
-                    if (selected?.engine?.isLoading == true) LinearProgressIndicator(
-                        progress = { selected.engine.progress / 100f },
-                        modifier = Modifier.fillMaxWidth().height(2.dp))
                 } else {
                     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp,
                         top = 12.dp, bottom = 16.dp),
