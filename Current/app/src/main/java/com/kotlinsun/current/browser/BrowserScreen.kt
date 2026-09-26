@@ -39,6 +39,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
@@ -175,7 +176,7 @@ fun BrowserScreen(controller: BrowserController) {
     ui.linkTarget?.let { target ->
         AlertDialog(onDismissRequest = controller::dismissLinkMenu,
             shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+            containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
             title = { Text(if (target.imageUrl != null) "이미지·링크" else "링크") },
             text = {
@@ -207,7 +208,7 @@ fun BrowserScreen(controller: BrowserController) {
     ui.pendingExternalUrl?.let { url ->
         AlertDialog(onDismissRequest = controller::dismissExternal,
             shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+            containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
             title = { Text("외부 앱 열기") },
             text = { Text(url) },
@@ -374,9 +375,9 @@ private fun BrowserAddressField(
                 isError = isError,
                 placeholder = { Text("주소 또는 검색어") },
                 leadingIcon = {
-                    Icon(if (isHome || editing) Icons.Filled.Search else if (
+                    Icon(if (isError) Icons.Filled.ErrorOutline else if (isHome || editing) Icons.Filled.Search else if (
                         ui.selectedTab?.url?.startsWith("https://", true) == true) Icons.Filled.Lock
-                    else Icons.Filled.Language, contentDescription = null,
+                    else Icons.Filled.Language, contentDescription = if (isError) "주소 입력 오류" else null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 },
                 trailingIcon = {
@@ -404,7 +405,7 @@ private fun BrowserAddressField(
             onDismissRequest = onDismissSuggestions,
             modifier = Modifier.widthIn(max = 360.dp),
             shape = RoundedCornerShape(24.dp),
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+            containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
             shadowElevation = 16.dp,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
@@ -568,7 +569,7 @@ private fun BrowserBottomBar(ui: BrowserUiState, controller: BrowserController) 
     Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(top = 8.dp, bottom = 10.dp),
         contentAlignment = Alignment.Center) {
         Surface(shape = CircleShape,
-            color = if (ui.activeMode == TabMode.PRIVATE) Color(0xFF302642) else BrowserNavigation,
+            color = if (ui.activeMode == TabMode.PRIVATE) Color(0xFF363636) else BrowserNavigation,
             contentColor = Color.White,
             border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
             shadowElevation = 16.dp) {
@@ -968,7 +969,7 @@ private fun BookmarkScreen(ui: BrowserUiState, controller: BrowserController) {
     editing?.let { item ->
         AlertDialog(onDismissRequest = { editing = null },
             shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+            containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
             title = { Text("북마크 수정") },
             text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1202,7 +1203,7 @@ private fun BrowserDialogView(dialog: BrowserDialog, controller: BrowserControll
     }
     AlertDialog(onDismissRequest = controller::cancelDialog,
         shape = RoundedCornerShape(28.dp),
-        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+        containerColor = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp,
         title = { Text(title) },
         text = {

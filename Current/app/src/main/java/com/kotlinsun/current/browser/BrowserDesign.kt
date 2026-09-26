@@ -61,20 +61,20 @@ internal fun BrowserGlassSurface(
     content: @Composable BoxScope.() -> Unit,
 ) {
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val top = if (dark) Color(0xFF383644).copy(alpha = if (strong) 0.94f else 0.86f)
-        else Color.White.copy(alpha = if (strong) 0.92f else 0.78f)
-    val bottom = if (dark) Color(0xFF282633).copy(alpha = if (strong) 0.90f else 0.78f)
-        else Color(0xFFEAE5FF).copy(alpha = if (strong) 0.84f else 0.60f)
+    val top = if (dark) Color(0xFF282828).copy(alpha = 0.99f)
+        else Color.White.copy(alpha = 0.99f)
+    val bottom = if (dark) Color(0xFF1B1B1B).copy(alpha = if (strong) 0.99f else 0.97f)
+        else Color(0xFFF2F2F2).copy(alpha = if (strong) 0.99f else 0.97f)
     val stroke = when {
         error -> MaterialTheme.colorScheme.error
-        focused -> MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
-        dark -> Color.White.copy(alpha = 0.24f)
-        else -> Color.White.copy(alpha = 0.92f)
+        focused -> MaterialTheme.colorScheme.primary
+        dark -> Color.White.copy(alpha = 0.32f)
+        else -> MaterialTheme.colorScheme.outline
     }
     Box(modifier.shadow(if (strong) 20.dp else 12.dp, shape)
         .clip(shape)
         .background(Brush.verticalGradient(listOf(top, bottom)), shape)
-        .border(BorderStroke(if (focused || error) 1.5.dp else 1.dp, stroke), shape),
+        .border(BorderStroke(if (error) 2.dp else if (focused) 1.5.dp else 1.dp, stroke), shape),
         content = content)
 }
 
