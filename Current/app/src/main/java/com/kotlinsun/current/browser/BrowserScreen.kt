@@ -230,8 +230,7 @@ fun BrowserScreen(controller: BrowserController) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            Column(Modifier.background(if (ui.page == BrowserPage.WEB) Color.Transparent
-                else MaterialTheme.colorScheme.background).statusBarsPadding()) {
+            Column(Modifier.background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
                 if (ui.page == BrowserPage.WEB) {
                     val tabPosition = ui.visibleTabs.indexOfFirst { it.id == selected?.id } + 1
                     Surface(
@@ -300,6 +299,7 @@ fun BrowserScreen(controller: BrowserController) {
                                 modifier = Modifier.fillMaxWidth().height(2.dp))
                         }
                     }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
                 } else {
                     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp,
                         top = 12.dp, bottom = 16.dp),
@@ -318,7 +318,9 @@ fun BrowserScreen(controller: BrowserController) {
             if (ui.page == BrowserPage.WEB && !editing) BrowserBottomBar(ui, controller)
         },
     ) { padding ->
-        val contentModifier = if (ui.page == BrowserPage.WEB) Modifier.fillMaxSize()
+        // The tab card has its own space; only the floating bottom bar overlays web content.
+        val contentModifier = if (ui.page == BrowserPage.WEB)
+            Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())
             else Modifier.fillMaxSize().padding(padding)
         Box(contentModifier) {
             when {
@@ -667,7 +669,7 @@ private fun NewTabPage(
 ) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
         .padding(start = 22.dp, end = 22.dp,
-            top = chromePadding.calculateTopPadding() + 20.dp,
+            top = 20.dp,
             bottom = chromePadding.calculateBottomPadding() + 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(40.dp))
