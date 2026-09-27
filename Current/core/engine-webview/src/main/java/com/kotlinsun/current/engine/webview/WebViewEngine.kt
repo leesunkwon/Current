@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Message
 import android.os.Parcel
+import android.os.SystemClock
 import android.print.PrintDocumentAdapter
 import android.util.Base64
 import android.view.View
@@ -33,8 +34,9 @@ import android.webkit.WebViewDatabase
 import android.net.http.SslError
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import androidx.webkit.WebMessageCompat
+import androidx.webkit.WebMessagePortCompat
 import androidx.webkit.ProfileStore
-import androidx.webkit.WebViewCompat.WebMessageListener
 import com.kotlinsun.current.engine.BlobReceiver
 import com.kotlinsun.current.engine.BlobTransfer
 import com.kotlinsun.current.engine.BLOB_TRANSFER_CANCELLED
@@ -108,6 +110,7 @@ private class WebViewSession(
     private var activeFullScreen: FullScreenRequest? = null
     private var dialogsOnPage = 0
     private var approvedHttpUrl: String? = null
+    private var initialPopupGestureExpiresAt = 0L
     private var activeBlob: BlobTransfer? = null
     private val mobileUserAgent = webView.settings.userAgentString.orEmpty()
     override val view get() = webView
@@ -157,24 +160,16 @@ private class WebViewSession(
         webView.setFindListener { activeIndex, total, done ->
             if (!closed && done) callbacks.onFindResult(id, activeIndex, total)
         }
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-            // A browser cannot know the next site's origin before navigation. The bridge accepts
-            // data only for an app-started HTTPS transfer from its current main frame and token.
-            WebViewCompat.addWebMessageListener(webView, "CurrentBlobBridge", setOf("*"),
-                WebMessageListener { _, message, origin, mainFrame, reply ->
-                    if (mainFrame && origin.scheme == "https") {
-                        val data = runCatching { message.data }.getOrNull()
-                        (activeBlob as? WebBlobTransfer)?.receive(data, origin, mainFrame) { sequence, ok ->
-                            runCatching { reply.postMessage("$sequence:${if (ok) "ok" else "stop"}") }
-                        }
-                    }
-                })
-        }
+        // Blob transfers use a temporary MessagePort addressed to the active main-frame origin.
+        // No JavaScript bridge is injected into unrelated pages or subframes.
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 if (closed) return true
                 val uri = request.url
                 val scheme = uri.scheme?.lowercase()
+                val popupGesture = request.isForMainFrame && initialPopupGestureExpiresAt > 0 &&
+                    SystemClock.elapsedRealtime() <= initialPopupGestureExpiresAt
+                if (request.isForMainFrame) initialPopupGestureExpiresAt = 0
                 if (scheme == "http" && request.isForMainFrame) {
                     if (approvedHttpUrl == uri.toString()) {
                         approvedHttpUrl = null
@@ -186,12 +181,15 @@ private class WebViewSession(
                 if (scheme == "http" || scheme == "https") return false
                 if (!request.isForMainFrame && scheme in setOf("about", "data", "blob")) return false
                 if (scheme in setOf("file", "content", "about", "data", "blob", "javascript")) return true
-                if (request.isForMainFrame) callbacks.onExternalNavigation(id, uri.toString(), request.hasGesture())
+                if (request.isForMainFrame) callbacks.onExternalNavigation(id, uri.toString(),
+                    request.hasGesture() || popupGesture)
                 return true
             }
 
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 if (closed) return
+                if (url.startsWith("https://", true) || url.startsWith("http://", true))
+                    initialPopupGestureExpiresAt = 0
                 approvedHttpUrl = null
                 dialogsOnPage = 0
                 callbacks.onNavigationStarted(id)
@@ -384,20 +382,30 @@ private class WebViewSession(
             }
 
             override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
-                if (closed || !isUserGesture || resultMsg.obj !is WebView.WebViewTransport) return false
+                if (closed) return false
+                if (!isUserGesture || resultMsg.obj !is WebView.WebViewTransport) {
+                    callbacks.onPopupBlocked(id)
+                    return false
+                }
                 val request = object : PopupRequest {
                     override fun accept(session: EngineSession) {
-                        val child = session as? WebViewSession ?: return
-                        val transport = resultMsg.obj as? WebView.WebViewTransport ?: return
+                        val child = session as? WebViewSession
+                            ?: throw IllegalArgumentException("Popup requires a WebView session")
+                        val transport = resultMsg.obj as? WebView.WebViewTransport
+                            ?: throw IllegalStateException("Popup transport is unavailable")
+                        if (child.closed) throw IllegalStateException("Popup session is closed")
+                        child.initialPopupGestureExpiresAt = SystemClock.elapsedRealtime() + 5_000
                         transport.webView = child.webView
                         resultMsg.sendToTarget()
                     }
                 }
-                return callbacks.onPopupRequested(id, request)
+                val accepted = callbacks.onPopupRequested(id, request)
+                if (!accepted) callbacks.onPopupBlocked(id)
+                return accepted
             }
 
             override fun onCloseWindow(window: WebView) {
-                if (!closed) callbacks.onCloseRequested(id)
+                if (!closed && window === webView) callbacks.onCloseRequested(id)
             }
         }
         webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, length ->
@@ -476,10 +484,28 @@ private class WebViewSession(
         private var received = 0L
         private var nextSequence = 0
         private var awaitingChunk = false
+        private var appPort: WebMessagePortCompat? = null
+        private var untransferredPort: WebMessagePortCompat? = null
         private val timeout = Runnable { fail(appContext.getString(R.string.engine_blob_timeout)) }
         private val handler = Handler(Looper.getMainLooper())
 
         init { handler.postDelayed(timeout, 120_000) }
+
+        fun bindPorts(app: WebMessagePortCompat, outgoing: WebMessagePortCompat) {
+            appPort = app
+            untransferredPort = outgoing
+        }
+
+        fun transferred() { untransferredPort = null }
+
+        private fun closePorts() {
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_PORT_CLOSE)) {
+                runCatching { appPort?.close() }
+                runCatching { untransferredPort?.close() }
+            }
+            appPort = null
+            untransferredPort = null
+        }
 
         fun receive(data: String?, origin: Uri, mainFrame: Boolean, reply: (Int, Boolean) -> Unit) {
             val page = Uri.parse(webView.url.orEmpty())
@@ -519,12 +545,16 @@ private class WebViewSession(
                         awaitingChunk = true
                         received += bytes.size
                         nextSequence++
-                        receiver.onChunk(bytes) { success ->
-                            Handler(Looper.getMainLooper()).post {
+                        runCatching { receiver.onChunk(bytes) { success ->
+                            handler.post {
+                                if (finished) return@post
                                 awaitingChunk = false
                                 reply(sequence, success && !finished)
                                 if (!success) fail(appContext.getString(R.string.engine_blob_save_error))
                             }
+                        } }.onFailure {
+                            reply(sequence, false)
+                            fail(appContext.getString(R.string.engine_blob_save_error))
                         }
                     }
                 }
@@ -537,7 +567,9 @@ private class WebViewSession(
                         activeBlob = null
                         handler.removeCallbacks(timeout)
                         reply(sequence, true)
-                        receiver.onComplete(message.optString("mime").takeIf { it.isNotBlank() })
+                        try {
+                            receiver.onComplete(message.optString("mime").takeIf { it.isNotBlank() })
+                        } finally { closePorts() }
                     }
                 }
                 "error" -> {
@@ -554,22 +586,34 @@ private class WebViewSession(
             finished = true
             handler.removeCallbacks(timeout)
             if (activeBlob === this) activeBlob = null
-            receiver.onError(message)
+            try { receiver.onError(message) } finally { closePorts() }
         }
+
+        fun abort(message: String) = fail(message)
 
         override fun cancel() = fail(BLOB_TRANSFER_CANCELLED)
     }
 
     override fun blobUnavailableReason(url: String): String? {
         if (closed) return appContext.getString(R.string.engine_blob_tab_closed)
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.CREATE_WEB_MESSAGE_CHANNEL) ||
+            !WebViewFeature.isFeatureSupported(WebViewFeature.POST_WEB_MESSAGE) ||
+            !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_PORT_POST_MESSAGE) ||
+            !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_PORT_SET_MESSAGE_CALLBACK) ||
+            !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_CALLBACK_ON_MESSAGE) ||
+            !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_PORT_CLOSE))
             return appContext.getString(R.string.engine_blob_unsupported)
         val page = Uri.parse(webView.url.orEmpty())
         if (page.scheme != "https" || page.host.isNullOrBlank())
             return appContext.getString(R.string.engine_blob_https_only)
-        val origin = "${page.scheme}://${page.host}${if (page.port >= 0) ":${page.port}" else ""}"
+        val origin = mainFrameOrigin(page)
         if (!url.startsWith("blob:$origin/")) return appContext.getString(R.string.engine_blob_other_origin)
         return null
+    }
+
+    private fun mainFrameOrigin(page: Uri): String {
+        val host = page.host.orEmpty().let { if (':' in it && !it.startsWith("[")) "[$it]" else it }
+        return "${page.scheme}://$host${if (page.port >= 0) ":${page.port}" else ""}"
     }
 
     override fun downloadBlob(url: String, maxBytes: Long, receiver: BlobReceiver): BlobTransfer? {
@@ -579,15 +623,41 @@ private class WebViewSession(
         val token = UUID.randomUUID().toString()
         val transfer = WebBlobTransfer(token, page, maxBytes, receiver)
         activeBlob = transfer
-        val script = """(async()=>{
-            const bridge=window.CurrentBlobBridge, token=${JSONObject.quote(token)}, url=${JSONObject.quote(url)};
-            if(!bridge)return;
+        val ports = try { WebViewCompat.createWebMessageChannel(webView) } catch (error: RuntimeException) {
+            transfer.cancel()
+            throw error
+        }
+        transfer.bindPorts(ports[0], ports[1])
+        try {
+            ports[0].setWebMessageCallback(object : WebMessagePortCompat.WebMessageCallbackCompat() {
+                override fun onMessage(port: WebMessagePortCompat, message: WebMessageCompat?) {
+                    if (activeBlob !== transfer) return
+                    transfer.receive(message?.data, page, true) { sequence, ok ->
+                        runCatching { port.postMessage(WebMessageCompat("$sequence:${if (ok) "ok" else "stop"}")) }
+                    }
+                }
+            })
+        } catch (error: RuntimeException) {
+            transfer.cancel()
+            throw error
+        }
+        val script = """(()=>{
+            const token=${JSONObject.quote(token)}, url=${JSONObject.quote(url)};
+            const setup=(event)=>{
+                if(event.data!==token||!event.ports||!event.ports[0])return;
+                clearTimeout(waiting);
+                window.removeEventListener('message',setup);
+                const port=event.ports[0];port.start();
+                (async()=>{
             const send=(payload)=>new Promise((resolve)=>{
                 const sequence=payload.seq;
+                const timeout=setTimeout(()=>{port.removeEventListener('message',receive);resolve(false);},120000);
                 const receive=(event)=>{if(event.data===sequence+':ok'||event.data===sequence+':stop'){
-                    bridge.removeEventListener('message',receive);resolve(event.data.endsWith(':ok'));}};
-                bridge.addEventListener('message',receive);
-                bridge.postMessage(JSON.stringify({...payload,token}));
+                    clearTimeout(timeout);port.removeEventListener('message',receive);
+                    resolve(event.data.endsWith(':ok'));}};
+                port.addEventListener('message',receive);
+                try{port.postMessage(JSON.stringify({...payload,token}));}
+                catch(_){clearTimeout(timeout);port.removeEventListener('message',receive);resolve(false);}
             });
             try {
                 const response=await fetch(url), blob=await response.blob();
@@ -602,9 +672,30 @@ private class WebViewSession(
                 }
                 await send({type:'complete',seq:sequence,mime:blob.type});
             } catch (_) {await send({type:'error',seq:-1});}
+                })().finally(()=>port.close());
+            };
+            const waiting=setTimeout(()=>window.removeEventListener('message',setup),120000);
+            window.addEventListener('message',setup);
+            return 'ready';
         })();""".trimIndent()
         try {
-            webView.evaluateJavascript(script, null)
+            webView.evaluateJavascript(script) { result ->
+                if (activeBlob !== transfer) return@evaluateJavascript
+                val current = Uri.parse(webView.url.orEmpty())
+                if (result != "\"ready\"" || current.scheme != page.scheme ||
+                    current.host != page.host || current.port != page.port) {
+                    transfer.abort(appContext.getString(R.string.engine_blob_page_changed))
+                    return@evaluateJavascript
+                }
+                try {
+                    val origin = Uri.parse(mainFrameOrigin(page))
+                    WebViewCompat.postWebMessage(webView,
+                        WebMessageCompat(token, arrayOf(ports[1])), origin)
+                    transfer.transferred()
+                } catch (_: RuntimeException) {
+                    transfer.abort(appContext.getString(R.string.engine_blob_page_read_error))
+                }
+            }
         } catch (error: RuntimeException) {
             transfer.cancel()
             throw error

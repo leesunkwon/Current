@@ -10,16 +10,12 @@ import android.os.Handler
 import android.os.Looper
 import android.print.PrintDocumentAdapter
 import android.provider.MediaStore
-import android.webkit.CookieManager
-import android.webkit.URLUtil
 import android.webkit.WebSettings
 import com.kotlinsun.current.R
 import com.kotlinsun.current.data.BookmarkRecord
 import com.kotlinsun.current.data.BrowserStore
-import com.kotlinsun.current.data.DownloadRecord
 import com.kotlinsun.current.data.HistoryRecord
 import com.kotlinsun.current.data.LocalDownloadRecord
-import com.kotlinsun.current.data.TabRecord
 import com.kotlinsun.current.engine.BlobReceiver
 import com.kotlinsun.current.engine.BlobTransfer
 import com.kotlinsun.current.engine.BLOB_TRANSFER_CANCELLED
@@ -37,7 +33,6 @@ import com.kotlinsun.current.engine.PopupRequest
 import com.kotlinsun.current.engine.SessionConfig
 import com.kotlinsun.current.engine.SiteInfo
 import com.kotlinsun.current.engine.TabMode
-import com.kotlinsun.current.engine.WebPermissionKind
 import com.kotlinsun.current.engine.WebPermissionRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -54,14 +49,17 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.io.File
 import java.io.FileOutputStream
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 
 interface BrowserHost {
     val activity: Activity
-    fun openExternal(url: String)
+    fun openExternal(url: String, privateMode: Boolean)
     fun share(url: String)
+    fun shareFile(uri: Uri, mimeType: String?, fileName: String)
     fun launchFileSelection(request: FileSelectionRequest)
     fun cancelFileSelection()
+    fun clearPrivateUploadCaptures(): Boolean
     fun requestPermissions(permissions: Array<String>, callback: (Boolean) -> Unit)
     fun setFullscreen(enabled: Boolean)
     fun openDownload(id: Long)
@@ -70,6 +68,8 @@ interface BrowserHost {
     fun print(adapter: PrintDocumentAdapter, jobName: String)
     fun isDefaultBrowser(): Boolean?
     fun requestDefaultBrowser(callback: (Boolean?) -> Unit)
+    fun pickBookmarkFile(): Boolean
+    fun createBookmarkFile(): Boolean
 }
 
 class BrowserController(
@@ -106,7 +106,7 @@ class BrowserController(
     private var suggestionJob: Job? = null
     private var suggestionVersion = 0
     private var pendingJavaScript: JavaScriptDialogRequest? = null
-    private var pendingPermission: WebPermissionRequest? = null
+    private val sitePermissions = SitePermissionCoordinator()
     private var pendingDownload: Pair<String, DownloadRequest>? = null
     private var pendingFile: Pair<String, FileSelectionRequest>? = null
     private var activeFullScreen: Pair<String, FullScreenRequest>? = null
@@ -116,6 +116,8 @@ class BrowserController(
         val bookmarks: List<String>,
     )
     private val recentlyClosed = ArrayDeque<ClosedTab>()
+    private var pendingBookmarkImport: List<ImportedBookmark>? = null
+    private var pendingBookmarkPreview: BookmarkImportPreview? = null
     private var pendingHttpAction: (() -> Unit)? = null
     private var activeBlob: Pair<String, BlobTransfer>? = null
     var awaitingFileResult = false
@@ -127,8 +129,11 @@ class BrowserController(
     private val retryingDownloadIds = mutableSetOf<Long>()
     private val approvedHttpRestores = mutableSetOf<String>()
     private val pendingHttpRedirects = mutableMapOf<String, String>()
+    private var pendingExternalSessionId: String? = null
     private var foreground = false
     private val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+    private val downloadRepository = DownloadRepository(context, store, downloadManager)
+    private val tabRestoration = TabRestoration(store)
 
     fun fileResultStarted() { awaitingFileResult = true }
     fun fileResultFinished() { awaitingFileResult = false }
@@ -149,6 +154,7 @@ class BrowserController(
         host?.cancelFileSelection()
         pendingFile = null
         sessions.keys.toList().forEach { id -> discardSession(id, save = true) }
+        host?.clearPrivateUploadCaptures()
         host = null
     }
 
@@ -200,7 +206,7 @@ class BrowserController(
                 store.saveOnboardingSeen(onboardingCompleted)
             }
             val firstUrl = if (records.isEmpty() && queuedUrls.isNotEmpty()) queuedUrls.removeFirst() else null
-            val tabs = records.map { BrowserTab(it.id, url = it.url, title = it.title) }
+            val tabs = records.map { TabRestoration.fromRecord(it) }
                 .ifEmpty { listOf(BrowserTab(UUID.randomUUID().toString(), url = firstUrl,
                     title = firstUrl ?: context.getString(R.string.new_tab))) }
             val selected = records.firstOrNull { it.selected }?.id ?: tabs.first().id
@@ -211,6 +217,10 @@ class BrowserController(
                 themeChoice = ThemeChoice.entries.firstOrNull { it.name == preferences?.theme } ?: ThemeChoice.SYSTEM,
                 textZoom = preferences?.textZoom?.coerceIn(75, 200) ?: 100,
                 allowThirdPartyCookies = preferences?.thirdPartyCookies ?: false)
+            pendingBookmarkPreview?.let { preview ->
+                mutableUi.value = mutableUi.value.copy(page = BrowserPage.BOOKMARKS,
+                    bookmarkImportPreview = preview)
+            }
             if (records.isEmpty()) persistTabs()
             store.prunePreviews(tabs.map { it.id }.toSet())
             store.pruneTabStates(tabs.map { it.id }.toSet())
@@ -329,6 +339,7 @@ class BrowserController(
         if (foreground) {
             closeFind()
             clearSuggestions()
+            dismissExternal()
             activeBlob?.second?.cancel()
             activeBlob = null
             cancelDialog()
@@ -363,6 +374,7 @@ class BrowserController(
         if (mode == mutableUi.value.activeMode) return
         closeFind()
         clearSuggestions()
+        dismissExternal()
         activeBlob?.second?.cancel()
         activeBlob = null
         cancelDialog()
@@ -385,6 +397,7 @@ class BrowserController(
         if (id != mutableUi.value.selectedId) {
             closeFind()
             clearSuggestions()
+            dismissExternal()
             activeBlob?.second?.cancel()
             activeBlob = null
             cancelDialog()
@@ -410,6 +423,7 @@ class BrowserController(
 
     fun closeTab(id: String) {
         val closing = tab(id) ?: return
+        if (pendingExternalSessionId == id) dismissExternal()
         if (mutableUi.value.selectedId == id) closeFind()
         if (mutableUi.value.selectedId == id) clearSuggestions()
         if (activeBlob?.first == id) {
@@ -454,6 +468,8 @@ class BrowserController(
             lastClosedTabId = if (closing.mode == TabMode.PRIVATE && nextPrivate == null) null else id)
         if (nextPrivate == null) {
             pendingPdf.entries.removeAll { it.value }
+            if (host?.clearPrivateUploadCaptures() == false)
+                notice(context.getString(R.string.private_upload_cleanup_error))
             destroyPrivateProfile()
             recentlyClosed.removeAll { it.tab.mode == TabMode.PRIVATE }
         }
@@ -465,6 +481,40 @@ class BrowserController(
     fun closeAllTabs() {
         mutableUi.value.visibleTabs.map { it.id }.forEach(::closeTab)
         mutableUi.value = mutableUi.value.copy(page = BrowserPage.WEB)
+    }
+
+    fun toggleTabPinned(id: String) {
+        val current = tab(id) ?: return
+        updateTab(id) { it.copy(pinned = !current.pinned) }
+        persistTabs()
+    }
+
+    fun moveTab(id: String, direction: Int) {
+        val state = mutableUi.value
+        val ordered = state.visibleTabs.toMutableList()
+        val index = ordered.indexOfFirst { it.id == id }
+        val target = index + direction
+        if (index < 0 || target !in ordered.indices ||
+            ordered[index].pinned != ordered[target].pinned) return
+        java.util.Collections.swap(ordered, index, target)
+        val reordered = ordered.iterator()
+        mutableUi.value = state.copy(tabs = state.tabs.map {
+            if (it.mode == state.activeMode) reordered.next() else it
+        })
+        persistTabs()
+    }
+
+    fun closeDuplicateTabs() {
+        val ordered = mutableUi.value.visibleTabs
+        val selectedId = mutableUi.value.selectedId
+        val duplicates = ordered.filter { it.url?.let(::isWebUrl) == true }
+            .groupBy { it.url.orEmpty() }
+            .values.flatMap { group ->
+                val keep = group.firstOrNull { it.id == selectedId }
+                    ?: group.firstOrNull { it.pinned } ?: group.first()
+                group.filterNot { it.id == keep.id }.map { it.id }
+            }
+        duplicates.forEach(::closeTab)
     }
 
     private fun publishClosedTabs() {
@@ -501,6 +551,8 @@ class BrowserController(
     }
 
     fun showPage(page: BrowserPage) {
+        if (page != BrowserPage.BOOKMARKS && mutableUi.value.bookmarkImportPreview != null)
+            cancelBookmarkImport()
         if (mutableUi.value.activeMode == TabMode.PRIVATE &&
             (page == BrowserPage.HISTORY || page == BrowserPage.DOWNLOADS)) {
             notice(context.getString(R.string.private_library_unavailable))
@@ -660,6 +712,7 @@ class BrowserController(
         val url = selected.url
         val action: () -> Unit = {
             updateTab(selected.id) { it.copy(desktopMode = enabled) }
+            persistTabs()
             val session = sessions[selected.id] ?: ensureSession(selected.id, restoreSavedState = false)
             if (session?.state?.value?.isLoading == true) session.stop()
             session?.setDesktopMode(enabled)
@@ -758,12 +811,10 @@ class BrowserController(
         if (restoreSavedState) {
             val expectedGeneration = generation(id)
             val restore = scope.launch(start = CoroutineStart.LAZY) {
-                val bytes = stateCache[id] ?: if (selected.mode == TabMode.NORMAL) store.readTabState(id) else null
+                val bytes = tabRestoration.readState(selected, stateCache[id])
                 if (generation(id) != expectedGeneration || sessions.entries.none { it.key == id && it.value === session }) return@launch
                 restoreJobs.remove(id)
-                if (bytes == null) {
-                    selected.url?.let(session::load)
-                } else if (!session.restoreState(bytes, selected.url)) {
+                if (!tabRestoration.restoreOrLoad(session, bytes, selected.url)) {
                     stateCache.remove(id)
                     discardSession(id, save = false)
                     if (selected.mode == TabMode.NORMAL) store.deleteTabState(id)
@@ -831,7 +882,7 @@ class BrowserController(
         val state = mutableUi.value
         if (!state.ready) return
         store.saveTabs(state.tabs.filter { it.mode == TabMode.NORMAL }.mapIndexed { index, item ->
-            TabRecord(item.id, index, item.url, item.title, item.id == state.selectedNormalId)
+            TabRestoration.toRecord(item, index, item.id == state.selectedNormalId)
         })
     }
 
@@ -845,10 +896,15 @@ class BrowserController(
 
     fun confirmExternal() {
         val url = mutableUi.value.pendingExternalUrl ?: return
+        val originTab = pendingExternalSessionId?.let(::tab)
+        val stillSelected = originTab != null && originTab.id == mutableUi.value.selectedId
         dismissExternal()
-        host?.openExternal(url)
+        if (stillSelected) host?.openExternal(url, originTab?.mode == TabMode.PRIVATE)
     }
-    fun dismissExternal() { mutableUi.value = mutableUi.value.copy(pendingExternalUrl = null) }
+    fun dismissExternal() {
+        pendingExternalSessionId = null
+        mutableUi.value = mutableUi.value.copy(pendingExternalUrl = null)
+    }
 
     fun updateSuggestions(query: String) {
         suggestionJob?.cancel()
@@ -992,6 +1048,97 @@ class BrowserController(
         }
     }
 
+    fun beginBookmarkImport() {
+        if (host?.pickBookmarkFile() != true)
+            notice(context.getString(R.string.bookmark_backup_unavailable))
+    }
+
+    fun readBookmarkFile(uri: Uri?) {
+        if (uri == null) return
+        scope.launch {
+            runCatching {
+                val entries = withContext(Dispatchers.IO) {
+                    val bytes = ByteArrayOutputStream()
+                    val input = context.contentResolver.openInputStream(uri)
+                        ?: error("Cannot open bookmark file")
+                    input.use { stream ->
+                        val chunk = ByteArray(8192)
+                        while (true) {
+                            val count = stream.read(chunk)
+                            if (count < 0) break
+                            if (bytes.size() + count > BookmarkBackup.MAX_BYTES) error("Bookmark file too large")
+                            bytes.write(chunk, 0, count)
+                        }
+                    }
+                    BookmarkBackup.parse(bytes.toString(Charsets.UTF_8.name()))
+                }
+                if (entries.isEmpty()) error("No supported bookmarks")
+                val existing = withContext(Dispatchers.IO) { store.loadBookmarks() }
+                    .mapTo(HashSet()) { BookmarkBackup.key(it.url) }
+                pendingBookmarkImport = entries
+                pendingBookmarkPreview = BookmarkImportPreview(
+                    total = entries.size,
+                    newCount = entries.count { BookmarkBackup.key(it.url) !in existing },
+                    duplicateCount = entries.count { BookmarkBackup.key(it.url) in existing },
+                    sample = entries.take(5).map { it.title },
+                )
+                mutableUi.value = mutableUi.value.copy(page = BrowserPage.BOOKMARKS,
+                    bookmarkImportPreview = pendingBookmarkPreview)
+            }.onFailure { notice(context.getString(R.string.bookmark_import_error)) }
+        }
+    }
+
+    fun cancelBookmarkImport() {
+        pendingBookmarkImport = null
+        pendingBookmarkPreview = null
+        mutableUi.value = mutableUi.value.copy(bookmarkImportPreview = null)
+    }
+
+    fun confirmBookmarkImport() {
+        val entries = pendingBookmarkImport ?: return
+        cancelBookmarkImport()
+        scope.launch {
+            runCatching {
+                val count = withContext(Dispatchers.IO) {
+                    val known = store.loadBookmarks().mapTo(HashSet()) { BookmarkBackup.key(it.url) }
+                    val now = System.currentTimeMillis()
+                    val additions = mutableListOf<BookmarkRecord>()
+                    entries.forEach { entry ->
+                        if (known.add(BookmarkBackup.key(entry.url))) {
+                            additions.add(BookmarkRecord(UUID.randomUUID().toString(), entry.url,
+                                entry.title, now + additions.size))
+                        }
+                    }
+                    store.importBookmarks(additions)
+                    additions.size
+                }
+                refreshBookmarks()
+                refreshQuickLinks()
+                notice(context.getString(R.string.bookmark_import_result, count))
+            }.onFailure { refreshBookmarks(); notice(context.getString(R.string.bookmark_import_error)) }
+        }
+    }
+
+    fun beginBookmarkExport() {
+        if (host?.createBookmarkFile() != true)
+            notice(context.getString(R.string.bookmark_backup_unavailable))
+    }
+
+    fun writeBookmarkFile(uri: Uri?) {
+        if (uri == null) return
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val records = store.loadBookmarks()
+                    val output = context.contentResolver.openOutputStream(uri, "wt")
+                        ?: error("Cannot create bookmark file")
+                    output.use { it.write(BookmarkBackup.export(records).toByteArray(Charsets.UTF_8)) }
+                }
+                notice(context.getString(R.string.bookmark_export_result))
+            }.onFailure { notice(context.getString(R.string.bookmark_export_error)) }
+        }
+    }
+
     fun saveCurrentBookmark() {
         val current = mutableUi.value.selectedTab ?: return
         val url = current.url?.takeIf(::isWebUrl) ?: return
@@ -1043,45 +1190,15 @@ class BrowserController(
     fun refreshDownloads() {
         val version = ++downloadRefreshVersion
         scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val rows = store.loadDownloads().map { record ->
-                        val cursor = downloadManager.query(DownloadManager.Query().setFilterById(record.id))
-                            ?: error("DownloadManager 조회 실패")
-                        cursor.use {
-                            if (it.moveToFirst()) {
-                                val status = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
-                                val missingFile = if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                                    try {
-                                        downloadManager.openDownloadedFile(record.id).use { }
-                                        false
-                                    } catch (_: java.io.FileNotFoundException) { true }
-                                    catch (_: SecurityException) { true }
-                                    catch (_: IllegalArgumentException) { true }
-                                } else false
-                                DownloadItem(record, if (missingFile) -1 else status,
-                                    it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON)),
-                                    it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)),
-                                    it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)))
-                            } else DownloadItem(record, -1, 0, 0, -1)
-                        }
-                    }
-                    val local = store.loadLocalDownloads()
-                    val missingLocal = local.filter { item ->
-                        try {
-                            context.contentResolver.openAssetFileDescriptor(Uri.parse(item.contentUri), "r")
-                                ?.use { false } ?: true
-                        } catch (_: java.io.FileNotFoundException) { true }
-                        catch (_: SecurityException) { true }
-                    }.map { it.id }.toSet()
-                    Triple(rows, local, missingLocal)
-                }
-            }
+            val result = withContext(Dispatchers.IO) { runCatching { downloadRepository.snapshot() } }
             if (version != downloadRefreshVersion) return@launch
-            result.onSuccess { (rows, local, missingLocal) ->
-                mutableUi.value = mutableUi.value.copy(downloads = rows,
-                    localDownloads = local, missingLocalDownloadIds = missingLocal,
-                    downloadError = null)
+            result.onSuccess { snapshot ->
+                mutableUi.value = mutableUi.value.copy(downloads = snapshot.managed,
+                    localDownloads = snapshot.local, missingLocalDownloadIds = snapshot.missingLocalIds,
+                    inaccessibleLocalDownloadIds = snapshot.inaccessibleLocalIds,
+                    downloadError = if (snapshot.managed.any { it.status == DOWNLOAD_STATUS_QUERY_ERROR } ||
+                        snapshot.inaccessibleLocalIds.isNotEmpty())
+                        context.getString(R.string.download_list_partial_error) else null)
             }.onFailure {
                 mutableUi.value = mutableUi.value.copy(downloadError =
                     context.getString(R.string.download_list_error))
@@ -1094,24 +1211,24 @@ class BrowserController(
     }
 
     fun retryDownload(item: DownloadItem) {
-        if (item.status != DownloadManager.STATUS_FAILED && item.status != -1) return
+        if (item.status != DownloadManager.STATUS_FAILED && item.status != DOWNLOAD_STATUS_MISSING) return
         val record = item.record
         if (!retryingDownloadIds.add(record.id)) return
         mutableUi.value = mutableUi.value.copy(retryingDownloadIds = retryingDownloadIds.toSet())
         val request = DownloadRequest(record.url, WebSettings.getDefaultUserAgent(context), null,
             record.mimeType, -1)
-        enqueueDownload(TabMode.NORMAL, request, uniqueFileName(record.fileName),
+        enqueueDownload(TabMode.NORMAL, request, downloadRepository.uniqueFileName(record.fileName),
             retryOriginalId = record.id)
     }
 
     fun clearMissingDownloadRecords() {
-        val ids = mutableUi.value.downloads.filter { it.status == -1 }.map { it.record.id }
+        val ids = mutableUi.value.downloads.filter { it.status == DOWNLOAD_STATUS_MISSING }.map { it.record.id }
         val localIds = mutableUi.value.missingLocalDownloadIds
         if (ids.isEmpty() && localIds.isEmpty()) return
         scope.launch {
             runCatching { withContext(Dispatchers.IO) {
                 ids.forEach {
-                    downloadManager.remove(it)
+                    runCatching { downloadManager.remove(it) }
                     store.deleteDownload(it)
                 }
                 localIds.forEach { store.deleteLocalDownload(it) }
@@ -1132,7 +1249,46 @@ class BrowserController(
         else host?.openDownload(id)
     }
 
+    fun shareDownload(item: DownloadItem) {
+        if (item.status != DownloadManager.STATUS_SUCCESSFUL) return
+        scope.launch {
+            val uri = withContext(Dispatchers.IO) { runCatching {
+                downloadManager.openDownloadedFile(item.record.id).use { }
+                downloadManager.getUriForDownloadedFile(item.record.id)
+            }.getOrNull() }
+            if (uri == null) notice(context.getString(R.string.download_file_not_found))
+            else host?.shareFile(uri, item.record.mimeType, item.record.fileName)
+        }
+    }
+
+    fun shareLocalDownload(item: LocalDownloadRecord) {
+        if (item.id in mutableUi.value.missingLocalDownloadIds) {
+            notice(context.getString(R.string.download_file_not_found))
+            return
+        }
+        if (item.id in mutableUi.value.inaccessibleLocalDownloadIds) {
+            notice(context.getString(R.string.download_file_access_error))
+            return
+        }
+        val uri = Uri.parse(item.contentUri)
+        scope.launch {
+            val exists = withContext(Dispatchers.IO) { runCatching {
+                context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { true } == true
+            }.getOrDefault(false) }
+            if (!exists) notice(context.getString(R.string.download_file_not_found))
+            else host?.shareFile(uri, item.mimeType, item.fileName)
+        }
+    }
+
     fun openLocalDownload(item: LocalDownloadRecord) {
+        if (item.id in mutableUi.value.missingLocalDownloadIds) {
+            notice(context.getString(R.string.download_file_not_found))
+            return
+        }
+        if (item.id in mutableUi.value.inaccessibleLocalDownloadIds) {
+            notice(context.getString(R.string.download_file_access_error))
+            return
+        }
         val mimeType = item.mimeType ?: if (item.fileName.endsWith(".pdf", true))
             "application/pdf" else null
         host?.openLocalFile(Uri.parse(item.contentUri), mimeType, false)
@@ -1168,7 +1324,7 @@ class BrowserController(
     }
 
     private fun deleteDownload(id: Long) {
-        val missingFile = mutableUi.value.downloads.firstOrNull { it.record.id == id }?.status == -1
+        val missingFile = mutableUi.value.downloads.firstOrNull { it.record.id == id }?.status == DOWNLOAD_STATUS_MISSING
         pendingPdf.remove(id)
         scope.launch {
             runCatching {
@@ -1282,30 +1438,7 @@ class BrowserController(
         when (dialog) {
             is BrowserDialog.JavaScript -> pendingJavaScript?.confirm(promptValue)
             is BrowserDialog.Permission -> {
-                val request = pendingPermission
-                val permissions = request?.kinds.orEmpty().mapNotNull {
-                    when (it) {
-                        WebPermissionKind.CAMERA -> android.Manifest.permission.CAMERA
-                        WebPermissionKind.MICROPHONE -> android.Manifest.permission.RECORD_AUDIO
-                        WebPermissionKind.LOCATION -> android.Manifest.permission.ACCESS_COARSE_LOCATION
-                        WebPermissionKind.PROTECTED_MEDIA -> null
-                    }
-                }.distinct().toTypedArray()
-                if (request != null) {
-                    if (permissions.isEmpty()) {
-                        request.grant()
-                        pendingPermission = null
-                    }
-                    else host?.requestPermissions(permissions) { granted ->
-                        if (pendingPermission === request) {
-                            if (granted) request.grant() else request.deny()
-                            pendingPermission = null
-                        }
-                    } ?: run {
-                        request.deny()
-                        pendingPermission = null
-                    }
-                }
+                sitePermissions.approve(host)
             }
             is BrowserDialog.Download -> pendingDownload?.let { (id, request) ->
                 if (request.url.startsWith("blob:", true)) beginBlobDownload(id, request, dialog.fileName)
@@ -1317,7 +1450,6 @@ class BrowserController(
             else -> Unit
         }
         pendingJavaScript = null
-        if (dialog !is BrowserDialog.Permission) pendingPermission = null
         pendingDownload = null
         pendingHttpAction = null
         mutableUi.value = mutableUi.value.copy(dialog = null)
@@ -1327,8 +1459,7 @@ class BrowserController(
     fun cancelDialog() {
         pendingJavaScript?.cancel()
         pendingJavaScript = null
-        pendingPermission?.deny()
-        pendingPermission = null
+        sitePermissions.cancel()
         pendingDownload = null
         pendingHttpAction = null
         mutableUi.value = mutableUi.value.copy(dialog = null)
@@ -1338,38 +1469,7 @@ class BrowserController(
                                 retryOriginalId: Long? = null) {
         scope.launch {
             runCatching { withContext(Dispatchers.IO) {
-            val uri = Uri.parse(request.url)
-            if (uri.scheme !in listOf("http", "https"))
-                error(context.getString(R.string.download_address_unsupported))
-            val cookie = if (mode == TabMode.NORMAL)
-                CookieManager.getInstance().getCookie(request.url) else null
-            val item = DownloadManager.Request(uri)
-                .setTitle(name)
-                .setDescription(uri.host.orEmpty())
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
-            request.mimeType?.let(item::setMimeType)
-            if (request.userAgent.isNotBlank()) item.addRequestHeader("User-Agent", request.userAgent)
-            cookie?.let { item.addRequestHeader("Cookie", it) }
-            val downloadId = downloadManager.enqueue(item)
-            if (mode == TabMode.NORMAL) {
-                try {
-                    store.addDownload(DownloadRecord(downloadId, request.url, name, request.mimeType,
-                        System.currentTimeMillis()))
-                } catch (error: Exception) {
-                    val removed = runCatching { downloadManager.remove(downloadId) > 0 }.getOrDefault(false)
-                    throw IllegalStateException(if (removed)
-                        context.getString(R.string.download_record_cancelled)
-                    else context.getString(R.string.download_record_failure), error)
-                }
-            }
-            val cleanupFailed = retryOriginalId?.let { oldId ->
-                runCatching {
-                    downloadManager.remove(oldId)
-                    store.deleteDownload(oldId)
-                }.isFailure
-            } ?: false
-            downloadId to cleanupFailed
+                downloadRepository.enqueue(mode, request, name, retryOriginalId)
             } }.onSuccess { (downloadId, cleanupFailed) ->
                 retryOriginalId?.let { retryingDownloadIds.remove(it) }
                 mutableUi.value = mutableUi.value.copy(retryingDownloadIds = retryingDownloadIds.toSet())
@@ -1514,29 +1614,17 @@ class BrowserController(
     }
 
     private fun safeFileName(request: DownloadRequest): String {
-        val guessed = runCatching {
-            URLUtil.guessFileName(request.url, request.contentDisposition, request.mimeType)
-        }.getOrNull().orEmpty().ifBlank { "download" }
-        return uniqueFileName(guessed)
-    }
-
-    private fun uniqueFileName(original: String): String {
-        val safe = original.map { if (it == '/' || it == '\\' || it.code < 32 ||
-            Character.getType(it) == Character.FORMAT.toInt()) '_' else it }
-            .joinToString("").trim('.').take(120).ifBlank { "download" }
-        val dot = safe.lastIndexOf('.')
-        val suffix = "-" + System.currentTimeMillis().toString(36)
-        return if (dot > 0) safe.substring(0, dot).take(100) + suffix + safe.substring(dot)
-        else safe.take(100) + suffix
+        return downloadRepository.safeFileName(request)
     }
 
     override fun onExternalNavigation(sessionId: String, url: String, hasGesture: Boolean) {
-        if (sessionId != mutableUi.value.selectedId) return
-        if (hasGesture) host?.openExternal(url)
-        else mutableUi.value = mutableUi.value.copy(pendingExternalUrl = url)
+        if (sessionId != mutableUi.value.selectedId || !hasGesture) return
+        pendingExternalSessionId = sessionId
+        mutableUi.value = mutableUi.value.copy(pendingExternalUrl = url)
     }
 
     override fun onNavigationStarted(sessionId: String) {
+        if (pendingExternalSessionId == sessionId) dismissExternal()
         pendingHttpRedirects.remove(sessionId)
         if (sessionId == mutableUi.value.selectedId) closeFind()
         if (activeBlob?.first == sessionId) {
@@ -1549,7 +1637,7 @@ class BrowserController(
         }
         updateTab(sessionId) { it.copy(favicon = null) }
         if (sessionId == mutableUi.value.selectedId &&
-            (pendingJavaScript != null || pendingPermission != null ||
+            (pendingJavaScript != null || sitePermissions.pending != null ||
                 pendingDownload?.first == sessionId))
             cancelDialog()
     }
@@ -1602,11 +1690,20 @@ class BrowserController(
         val parent = tab(parentId) ?: return false
         if (parentId != mutableUi.value.selectedId) return false
         newTab(mode = parent.mode)
-        val child = mutableUi.value.selectedTab ?: return false
+        val child = mutableUi.value.selectedTab?.takeIf {
+            it.id != parentId && it.mode == parent.mode && it.url == null
+        } ?: return false
         val session = ensureSession(child.id, restoreSavedState = false, protectedId = parentId)
             ?: run { closeTab(child.id); return false }
-        request.accept(session)
-        return true
+        return runCatching { request.accept(session) }.fold(
+            onSuccess = { true },
+            onFailure = { closeTab(child.id); false },
+        )
+    }
+
+    override fun onPopupBlocked(parentId: String) {
+        if (parentId == mutableUi.value.selectedId && mutableUi.value.dialog == null)
+            notice(context.getString(R.string.popup_blocked_notice))
     }
 
     override fun onCloseRequested(sessionId: String) { closeTab(sessionId) }
@@ -1637,7 +1734,11 @@ class BrowserController(
         else {
             host?.cancelFileSelection()
             pendingFile = sessionId to request
-            host?.launchFileSelection(request) ?: request.complete(null)
+            val owner = host
+            if (owner == null) {
+                pendingFile = null
+                request.complete(null)
+            } else owner.launchFileSelection(request)
         }
     }
 
@@ -1684,22 +1785,16 @@ class BrowserController(
     }
 
     override fun onPermission(sessionId: String, request: WebPermissionRequest) {
-        if (sessionId != mutableUi.value.selectedId || mutableUi.value.dialog != null || pendingPermission != null) {
+        if (sessionId != mutableUi.value.selectedId || mutableUi.value.dialog != null) {
             request.deny()
             return
         }
-        val origin = runCatching { Uri.parse(request.origin) }.getOrNull()
-        if (origin?.scheme != "https" && !(origin?.scheme == "http" && origin.host == "localhost")) {
-            request.deny()
-            return
-        }
-        pendingPermission = request
+        if (!sitePermissions.begin(request)) return
         mutableUi.value = mutableUi.value.copy(dialog = BrowserDialog.Permission(request.origin, request.kinds))
     }
 
     override fun onPermissionCanceled(sessionId: String, request: WebPermissionRequest) {
-        if (pendingPermission === request) {
-            pendingPermission = null
+        if (sitePermissions.cancelIfSame(request)) {
             if (mutableUi.value.dialog is BrowserDialog.Permission)
                 mutableUi.value = mutableUi.value.copy(dialog = null)
         }

@@ -132,6 +132,7 @@ interface EngineCallbacks {
     fun onExternalNavigation(sessionId: String, url: String, hasGesture: Boolean)
     fun onHttpNavigation(sessionId: String, url: String)
     fun onPopupRequested(parentId: String, request: PopupRequest): Boolean
+    fun onPopupBlocked(parentId: String)
     fun onCloseRequested(sessionId: String)
     fun onRendererGone(sessionId: String, session: EngineSession)
     fun onFileSelection(sessionId: String, request: FileSelectionRequest)

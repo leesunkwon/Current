@@ -80,12 +80,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.viewinterop.AndroidView
@@ -102,6 +104,7 @@ fun BrowserScreen(controller: BrowserController) {
     val ui by controller.ui.collectAsState()
     val selected = ui.selectedTab
     val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     var address by remember { mutableStateOf(TextFieldValue("")) }
     var editing by remember { mutableStateOf(false) }
@@ -139,7 +142,10 @@ fun BrowserScreen(controller: BrowserController) {
     val onAddressChange: (TextFieldValue) -> Unit = { next ->
         val textChanged = next.text != address.text
         val compositionFinished = address.composition != null && next.composition == null
-        val completed = if (textChanged && !compositionFinished && next.composition == null &&
+        val typedOneCharacter = next.text.length == address.text.length + 1 &&
+            next.text.startsWith(address.text) && address.selection.collapsed
+        val completed = if (textChanged && typedOneCharacter && !compositionFinished &&
+            address.composition == null && next.composition == null &&
             next.selection.collapsed &&
             next.selection.end == next.text.length) controller.inlineCompletion(next.text) else null
         address = if (completed != null) TextFieldValue(completed,
@@ -148,8 +154,9 @@ fun BrowserScreen(controller: BrowserController) {
         if (next.composition != null) {
             dismissSuggestions()
         } else if (textChanged || compositionFinished) {
-            suggestionsVisible = next.text.isNotBlank()
-            controller.updateSuggestions(next.text)
+            suggestionsVisible = next.text.trim().length >= 2
+            if (suggestionsVisible) controller.updateSuggestions(next.text)
+            else controller.clearSuggestions()
         }
     }
     val onAddressFocus: (Boolean) -> Unit = { focused ->
@@ -177,8 +184,13 @@ fun BrowserScreen(controller: BrowserController) {
     }
     BackHandler(enabled = editing && ui.page == BrowserPage.WEB && ui.dialog == null &&
         ui.linkTarget == null && ui.pendingExternalUrl == null) {
-        focus.clearFocus()
-        dismissSuggestions()
+        if (imeVisible) {
+            keyboard?.hide()
+            dismissSuggestions()
+        } else {
+            focus.clearFocus()
+            dismissSuggestions()
+        }
     }
 
     ui.dialog?.let { BrowserDialogView(it, controller) }
@@ -227,7 +239,7 @@ fun BrowserScreen(controller: BrowserController) {
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
             title = { Text(stringResource(R.string.open_external_app)) },
-            text = { Text(url) },
+            text = { Text(url, maxLines = 6, overflow = TextOverflow.Ellipsis) },
             confirmButton = { TextButton(onClick = controller::confirmExternal,
                 modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.open)) } },
             dismissButton = { TextButton(onClick = controller::dismissExternal,
@@ -298,8 +310,10 @@ fun BrowserScreen(controller: BrowserController) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = stringResource(R.string.return_to_web))
                         }
-                        Text(ui.page.label(), modifier = Modifier.padding(start = 8.dp),
-                            style = MaterialTheme.typography.titleLarge)
+                        Text(ui.page.label(), modifier = Modifier.weight(1f).padding(start = 8.dp)
+                            .semantics { heading() },
+                            style = MaterialTheme.typography.titleLarge,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
@@ -313,7 +327,9 @@ fun BrowserScreen(controller: BrowserController) {
         val contentModifier = if (ui.page == BrowserPage.WEB)
             Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())
             else Modifier.fillMaxSize().padding(padding)
-        Box(contentModifier) {
+        Box(contentModifier, contentAlignment = Alignment.TopCenter) {
+          Box(if (ui.page == BrowserPage.WEB) Modifier.fillMaxSize()
+              else Modifier.widthIn(max = 900.dp).fillMaxSize()) {
             when {
                 !ui.ready -> Column(Modifier.align(Alignment.Center).padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
@@ -372,6 +388,7 @@ fun BrowserScreen(controller: BrowserController) {
                     }
                 }
             }
+          }
         }
     }
 }
@@ -399,12 +416,14 @@ private fun NewTabPage(
     val singleQuickLinkColumn = LocalConfiguration.current.let {
         it.screenWidthDp < 360 || it.fontScale >= 1.4f
     }
+    val compactHeight = LocalConfiguration.current.screenHeightDp < 480 ||
+        WindowInsets.ime.getBottom(LocalDensity.current) > 0
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
         .padding(start = 22.dp, end = 22.dp,
             top = 20.dp,
             bottom = chromePadding.calculateBottomPadding() + 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
-        Spacer(Modifier.height(40.dp))
+        Spacer(Modifier.height(if (compactHeight) 12.dp else 40.dp))
         if (ui.activeMode == TabMode.PRIVATE) {
             Surface(Modifier.size(68.dp), shape = RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.primaryContainer) {
@@ -414,9 +433,10 @@ private fun NewTabPage(
                 }
             }
         } else CurrentBrandIcon(Modifier.size(68.dp), RoundedCornerShape(24.dp))
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(if (compactHeight) 12.dp else 24.dp))
         Text(stringResource(if (ui.activeMode == TabMode.PRIVATE)
             R.string.private_intro_title else R.string.new_tab_title),
+            modifier = Modifier.semantics { heading() },
             style = MaterialTheme.typography.headlineLarge, textAlign = TextAlign.Center)
         Spacer(Modifier.height(10.dp))
         Text(stringResource(if (ui.activeMode == TabMode.PRIVATE)
@@ -424,11 +444,12 @@ private fun NewTabPage(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center)
-        Spacer(Modifier.height(30.dp))
+        Spacer(Modifier.height(if (compactHeight) 14.dp else 30.dp))
         addressField()
         if (ui.activeMode == TabMode.NORMAL && ui.quickLinks.isNotEmpty()) {
-            Spacer(Modifier.height(38.dp))
-            Text(stringResource(R.string.quick_access), modifier = Modifier.fillMaxWidth(),
+            Spacer(Modifier.height(if (compactHeight) 18.dp else 38.dp))
+            Text(stringResource(R.string.quick_access), modifier = Modifier.fillMaxWidth()
+                .semantics { heading() },
                 style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(14.dp))
             ui.quickLinks.take(4).chunked(if (singleQuickLinkColumn) 1 else 2).forEach { pair ->
@@ -594,7 +615,14 @@ private fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
 @Composable
 private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
     val context = LocalContext.current
-    val compact = LocalConfiguration.current.screenWidthDp < 360
+    var query by remember { mutableStateOf("") }
+    val ordered = ui.visibleTabs
+    val filtered = ordered.filter { query.isBlank() ||
+        it.title.contains(query, true) || it.url?.contains(query, true) == true }
+    val duplicateCount = ordered.mapNotNull { it.url?.takeIf { url ->
+        url.startsWith("http://", true) || url.startsWith("https://", true) } }
+        .groupingBy { it }.eachCount().values.sumOf { (it - 1).coerceAtLeast(0) }
+    val compact = LocalConfiguration.current.let { it.screenWidthDp < 360 || it.fontScale >= 1.4f }
     val previewWidth = if (compact) 64.dp else 92.dp
     val previewHeight = if (compact) 64.dp else 78.dp
     val closeAllDescription = stringResource(if (ui.activeMode == TabMode.PRIVATE)
@@ -616,24 +644,46 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically) {
+        OutlinedTextField(query, { query = it },
+            placeholder = { Text(stringResource(R.string.tab_search)) },
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            singleLine = true, shape = CircleShape,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+                .semantics { contentDescription = context.getString(R.string.tab_search) })
+        val tabActions: @Composable (Modifier, Modifier) -> Unit = { closeModifier, newModifier ->
             TextButton(onClick = controller::closeAllTabs,
-                modifier = Modifier.heightIn(min = 48.dp).semantics {
+                modifier = closeModifier.heightIn(min = 48.dp).semantics {
                     contentDescription = closeAllDescription
                 }) {
                 Text(stringResource(R.string.close_all_tabs))
             }
             TextButton(onClick = { controller.newTab(mode = ui.activeMode) },
-                modifier = Modifier.heightIn(min = 48.dp)) {
+                modifier = newModifier.heightIn(min = 48.dp)) {
                 Icon(Icons.Filled.Add, contentDescription = null)
                 Text(stringResource(R.string.new_tab))
             }
         }
+        if (compact) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                tabActions(Modifier.fillMaxWidth(), Modifier.fillMaxWidth())
+            }
+        } else {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
+                tabActions(Modifier, Modifier)
+            }
+        }
+        if (duplicateCount > 0) TextButton(onClick = controller::closeDuplicateTabs,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+            Text(stringResource(R.string.tab_close_duplicates, duplicateCount))
+        }
         LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(ui.visibleTabs, key = { it.id }) { tab ->
+            if (filtered.isEmpty()) item { BrowserPanel(Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.search_empty))
+            } }
+            items(filtered, key = { it.id }) { tab ->
                 val tabMode = stringResource(if (tab.mode == TabMode.PRIVATE)
                     R.string.private_mode else R.string.normal_mode)
                 val tabUrl = tab.url ?: stringResource(R.string.new_tab)
@@ -645,8 +695,8 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                 Surface(shape = RoundedCornerShape(22.dp),
                     color = MaterialTheme.colorScheme.surface,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
-                    Row(Modifier.fillMaxWidth().padding(10.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.fillMaxWidth().padding(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Row(Modifier.weight(1f).heightIn(min = 80.dp)
                             .clickable(onClickLabel = context.getString(R.string.tab_open, tab.title)) {
                                 controller.selectTab(tab.id)
@@ -680,12 +730,35 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                                 contentDescription = stringResource(R.string.tab_close, tab.title))
                         }
                     }
+                    val index = ordered.indexOfFirst { it.id == tab.id }
+                    val canUp = index > 0 && ordered[index - 1].pinned == tab.pinned
+                    val canDown = index >= 0 && index < ordered.lastIndex &&
+                        ordered[index + 1].pinned == tab.pinned
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { controller.toggleTabPinned(tab.id) },
+                            modifier = Modifier.heightIn(min = 48.dp).semantics {
+                                contentDescription = context.getString(if (tab.pinned)
+                                    R.string.tab_unpin else R.string.tab_pin, tab.title)
+                            }) { Text(stringResource(if (tab.pinned)
+                                R.string.tab_unpin_short else R.string.tab_pin_short), maxLines = 1) }
+                        TextButton(onClick = { controller.moveTab(tab.id, -1) }, enabled = canUp,
+                            modifier = Modifier.heightIn(min = 48.dp).semantics {
+                                contentDescription = context.getString(R.string.tab_move_up, tab.title)
+                            }) { Text(stringResource(R.string.tab_move_up_short)) }
+                        TextButton(onClick = { controller.moveTab(tab.id, 1) }, enabled = canDown,
+                            modifier = Modifier.heightIn(min = 48.dp).semantics {
+                                contentDescription = context.getString(R.string.tab_move_down, tab.title)
+                            }) { Text(stringResource(R.string.tab_move_down_short)) }
+                    }
+                    }
                 }
             }
-            if (ui.closedTabs.any { it.url != null }) {
+            if (query.isBlank() && ui.closedTabs.any { it.url != null }) {
                 item {
                     Text(stringResource(R.string.recently_closed_tabs),
-                        modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
+                        modifier = Modifier.padding(top = 12.dp, bottom = 2.dp)
+                            .semantics { heading() },
                         style = MaterialTheme.typography.titleMedium)
                 }
                 items(ui.closedTabs.filter { it.url != null }, key = { "closed-" + it.id }) { closed ->
@@ -788,6 +861,24 @@ private fun BookmarkScreen(ui: BrowserUiState, controller: BrowserController) {
     var editing by remember { mutableStateOf<BookmarkRecord?>(null) }
     var title by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
+    ui.bookmarkImportPreview?.let { preview ->
+        AlertDialog(onDismissRequest = controller::cancelBookmarkImport,
+            title = { Text(stringResource(R.string.bookmark_import_preview)) },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.bookmark_import_counts, preview.total,
+                    preview.newCount, preview.duplicateCount))
+                preview.sample.forEach { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            } },
+            confirmButton = { TextButton(onClick = controller::confirmBookmarkImport,
+                enabled = preview.newCount > 0,
+                modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.bookmark_import))
+            } },
+            dismissButton = { TextButton(onClick = controller::cancelBookmarkImport,
+                modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.cancel))
+            } })
+    }
     editing?.let { item ->
         AlertDialog(onDismissRequest = { editing = null },
             shape = RoundedCornerShape(28.dp),
@@ -808,6 +899,18 @@ private fun BookmarkScreen(ui: BrowserUiState, controller: BrowserController) {
             }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.save)) } },
             dismissButton = { TextButton(onClick = { editing = null },
                 modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.cancel)) } })
+    }
+    Column(Modifier.fillMaxSize()) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextButton(onClick = controller::beginBookmarkImport,
+            modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+            Text(stringResource(R.string.bookmark_import))
+        }
+        TextButton(onClick = controller::beginBookmarkExport,
+            modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+            Text(stringResource(R.string.bookmark_export))
+        }
     }
     LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -857,11 +960,40 @@ private fun BookmarkScreen(ui: BrowserUiState, controller: BrowserController) {
             }
         }
     }
+    }
 }
 
 @Composable
 private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
     val context = LocalContext.current
+    var query by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf(DownloadFilter.ALL) }
+    val matchingDownloads = ui.downloads.filter { item ->
+        (query.isBlank() || item.record.fileName.contains(query, true) ||
+            item.record.url.contains(query, true)) && when (filter) {
+            DownloadFilter.ALL -> true
+            DownloadFilter.ACTIVE -> item.status == DownloadManager.STATUS_PENDING ||
+                item.status == DownloadManager.STATUS_RUNNING || item.status == DownloadManager.STATUS_PAUSED
+            DownloadFilter.COMPLETE -> item.status == DownloadManager.STATUS_SUCCESSFUL
+            DownloadFilter.FAILED -> item.status == DownloadManager.STATUS_FAILED ||
+                item.status == DOWNLOAD_STATUS_MISSING || item.status == DOWNLOAD_STATUS_QUERY_ERROR
+        }
+    }
+    val matchingLocal = ui.localDownloads.filter { item ->
+        (query.isBlank() || item.fileName.contains(query, true) || item.url.contains(query, true)) &&
+            when (filter) {
+                DownloadFilter.ALL -> true
+                DownloadFilter.ACTIVE -> false
+                DownloadFilter.COMPLETE -> item.id !in ui.missingLocalDownloadIds &&
+                    item.id !in ui.inaccessibleLocalDownloadIds
+                DownloadFilter.FAILED -> item.id in ui.missingLocalDownloadIds ||
+                    item.id in ui.inaccessibleLocalDownloadIds
+            }
+    }
+    val compactActions = LocalConfiguration.current.let {
+        it.screenWidthDp < 360 || it.fontScale >= 1.4f
+    }
+    val actionModifier = if (compactActions) Modifier.fillMaxWidth() else Modifier
     val hasActiveDownload = ui.downloads.any { it.status == DownloadManager.STATUS_PENDING ||
         it.status == DownloadManager.STATUS_RUNNING || it.status == DownloadManager.STATUS_PAUSED }
     LaunchedEffect(hasActiveDownload) {
@@ -869,6 +1001,20 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
         while (hasActiveDownload) {
             delay(2000)
             controller.refreshDownloads()
+        }
+    }
+    Column(Modifier.fillMaxSize()) {
+    OutlinedTextField(query, { query = it },
+        placeholder = { Text(stringResource(R.string.download_search)) },
+        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+        singleLine = true, shape = CircleShape,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+            .semantics { contentDescription = context.getString(R.string.download_search) })
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+        .padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        DownloadFilter.entries.forEach { choice ->
+            ChoicePill(stringResource(choice.labelRes), filter == choice,
+                { filter = choice }, modifier = Modifier.heightIn(min = 48.dp))
         }
     }
     LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 24.dp),
@@ -882,19 +1028,21 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
                 }
             }
         } }
-        if (ui.downloads.any { it.status == -1 } || ui.missingLocalDownloadIds.isNotEmpty()) item {
+        if (ui.downloads.any { it.status == DOWNLOAD_STATUS_MISSING } ||
+            ui.missingLocalDownloadIds.isNotEmpty()) item {
             TextButton(onClick = controller::clearMissingDownloadRecords,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                 Text(stringResource(R.string.download_missing_cleanup))
             }
         }
-        if (ui.downloadError == null && ui.downloads.isEmpty() && ui.localDownloads.isEmpty()) {
+        if (ui.downloadError == null && matchingDownloads.isEmpty() && matchingLocal.isEmpty()) {
             item { BrowserPanel(Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.download_history_empty),
+                Text(stringResource(if (query.isBlank() && filter == DownloadFilter.ALL)
+                    R.string.download_history_empty else R.string.search_empty),
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             } }
         }
-        items(ui.downloads, key = { it.record.id }) { item ->
+        items(matchingDownloads, key = { it.record.id }) { item ->
             val label = when (item.status) {
                 DownloadManager.STATUS_PENDING -> stringResource(R.string.download_pending)
                 DownloadManager.STATUS_RUNNING -> stringResource(R.string.download_running)
@@ -903,6 +1051,7 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
                 DownloadManager.STATUS_SUCCESSFUL -> stringResource(R.string.download_complete)
                 DownloadManager.STATUS_FAILED -> stringResource(R.string.download_failed,
                     downloadFailureReason(item.reason))
+                DOWNLOAD_STATUS_QUERY_ERROR -> stringResource(R.string.download_status_unavailable)
                 else -> stringResource(R.string.download_missing)
             }
             BrowserPanel(Modifier.fillMaxWidth()) {
@@ -914,7 +1063,7 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
                 Text(label + (progress?.let { " · ${(it * 100).toInt()}%" } ?: ""),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall)
-                if (item.status == DownloadManager.STATUS_FAILED || item.status == -1) {
+                if (item.status == DownloadManager.STATUS_FAILED || item.status == DOWNLOAD_STATUS_MISSING) {
                     Text(downloadRetryGuidance(item), style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -930,24 +1079,28 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
                     Spacer(Modifier.height(10.dp))
                     LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    if (item.status == DownloadManager.STATUS_FAILED || item.status == -1) {
+                DownloadActionContainer(compactActions) {
+                    if (item.status == DownloadManager.STATUS_FAILED || item.status == DOWNLOAD_STATUS_MISSING) {
                         TextButton(onClick = { controller.retryDownload(item) },
                             enabled = item.record.id !in ui.retryingDownloadIds,
-                            modifier = Modifier.heightIn(min = 48.dp).semantics {
+                            modifier = actionModifier.heightIn(min = 48.dp).semantics {
                                 contentDescription = context.getString(R.string.download_retry_item,
                                     item.record.fileName)
                             }) { Text(stringResource(R.string.download_retry)) }
                     }
                     if (item.status == DownloadManager.STATUS_SUCCESSFUL) {
                         TextButton(onClick = { controller.openDownload(item.record.id) },
-                            modifier = Modifier.heightIn(min = 48.dp).semantics {
+                            modifier = actionModifier.heightIn(min = 48.dp).semantics {
                                 contentDescription = context.getString(R.string.file_open,
                                     item.record.fileName)
                             }) { Text(stringResource(R.string.open)) }
+                        TextButton(onClick = { controller.shareDownload(item) },
+                            modifier = actionModifier.heightIn(min = 48.dp).semantics {
+                                contentDescription = context.getString(R.string.file_share, item.record.fileName)
+                            }) { Text(stringResource(R.string.share)) }
                     }
                     TextButton(onClick = { controller.requestDeleteDownload(item) },
-                        modifier = Modifier.heightIn(min = 48.dp).semantics {
+                        modifier = actionModifier.heightIn(min = 48.dp).semantics {
                             contentDescription = context.getString(
                                 if (item.status == DownloadManager.STATUS_PENDING ||
                                     item.status == DownloadManager.STATUS_RUNNING ||
@@ -963,27 +1116,52 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
                 }
             }
         }
-        items(ui.localDownloads, key = { "local-" + it.id }) { item ->
+        items(matchingLocal, key = { "local-" + it.id }) { item ->
             val missing = item.id in ui.missingLocalDownloadIds
+            val inaccessible = item.id in ui.inaccessibleLocalDownloadIds
             BrowserPanel(Modifier.fillMaxWidth()) {
                 Text(item.fileName, style = MaterialTheme.typography.bodyLarge,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(5.dp))
-                Text(stringResource(if (missing) R.string.download_missing else R.string.download_complete),
+                Text(stringResource(when {
+                    missing -> R.string.download_missing
+                    inaccessible -> R.string.download_file_access_error
+                    else -> R.string.download_complete
+                }),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    if (!missing) TextButton(onClick = { controller.openLocalDownload(item) },
-                        modifier = Modifier.heightIn(min = 48.dp).semantics {
+                DownloadActionContainer(compactActions) {
+                    if (!missing && !inaccessible) TextButton(onClick = { controller.openLocalDownload(item) },
+                        modifier = actionModifier.heightIn(min = 48.dp).semantics {
                             contentDescription = context.getString(R.string.file_open, item.fileName)
                         }) { Text(stringResource(R.string.open)) }
+                    if (!missing && !inaccessible) TextButton(onClick = { controller.shareLocalDownload(item) },
+                        modifier = actionModifier.heightIn(min = 48.dp).semantics {
+                            contentDescription = context.getString(R.string.file_share, item.fileName)
+                        }) { Text(stringResource(R.string.share)) }
                     TextButton(onClick = { controller.requestDeleteLocalDownload(item) },
-                        modifier = Modifier.heightIn(min = 48.dp).semantics {
+                        modifier = actionModifier.heightIn(min = 48.dp).semantics {
                             contentDescription = context.getString(R.string.file_delete, item.fileName)
                         }) { Text(stringResource(R.string.delete)) }
                 }
             }
         }
+    }
+    }
+}
+
+private enum class DownloadFilter(val labelRes: Int) {
+    ALL(R.string.download_filter_all), ACTIVE(R.string.download_filter_active),
+    COMPLETE(R.string.download_filter_complete), FAILED(R.string.download_filter_failed),
+}
+
+@Composable
+private fun DownloadActionContainer(compact: Boolean, content: @Composable () -> Unit) {
+    if (compact) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) { content() }
+    } else {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)) { content() }
     }
 }
 
@@ -1002,7 +1180,7 @@ private fun downloadFailureReason(reason: Int): String = when (reason) {
 
 @Composable
 private fun downloadRetryGuidance(item: DownloadItem): String = when {
-    item.status == -1 -> stringResource(R.string.download_missing_guidance)
+    item.status == DOWNLOAD_STATUS_MISSING -> stringResource(R.string.download_missing_guidance)
     item.reason == DownloadManager.ERROR_INSUFFICIENT_SPACE ->
         stringResource(R.string.download_space_guidance)
     item.reason == DownloadManager.ERROR_FILE_ERROR ||

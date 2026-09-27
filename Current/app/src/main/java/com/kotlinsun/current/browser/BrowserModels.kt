@@ -33,6 +33,7 @@ data class BrowserTab(
     val preview: ByteArray? = null,
     val favicon: ByteArray? = null,
     val desktopMode: Boolean = false,
+    val pinned: Boolean = false,
 )
 
 data class AddressSuggestion(
@@ -42,6 +43,16 @@ data class AddressSuggestion(
 )
 
 data class ClosedTabSummary(val id: String, val title: String, val url: String?)
+
+data class BookmarkImportPreview(
+    val total: Int,
+    val newCount: Int,
+    val duplicateCount: Int,
+    val sample: List<String>,
+)
+
+internal const val DOWNLOAD_STATUS_MISSING = -1
+internal const val DOWNLOAD_STATUS_QUERY_ERROR = -2
 
 data class DownloadItem(
     val record: DownloadRecord,
@@ -93,9 +104,11 @@ data class BrowserUiState(
     val lastClosedTabId: String? = null,
     val history: List<HistoryRecord> = emptyList(),
     val bookmarks: List<BookmarkRecord> = emptyList(),
+    val bookmarkImportPreview: BookmarkImportPreview? = null,
     val downloads: List<DownloadItem> = emptyList(),
     val localDownloads: List<LocalDownloadRecord> = emptyList(),
     val missingLocalDownloadIds: Set<Long> = emptySet(),
+    val inaccessibleLocalDownloadIds: Set<Long> = emptySet(),
     val retryingDownloadIds: Set<Long> = emptySet(),
     val downloadError: String? = null,
     val siteInfo: SiteInfo? = null,
@@ -107,4 +120,5 @@ data class BrowserUiState(
     val selectedId: String? get() = if (activeMode == TabMode.NORMAL) selectedNormalId else selectedPrivateId
     val selectedTab: BrowserTab? get() = tabs.firstOrNull { it.id == selectedId }
     val visibleTabs: List<BrowserTab> get() = tabs.filter { it.mode == activeMode }
+        .sortedWith(compareByDescending<BrowserTab> { it.pinned })
 }

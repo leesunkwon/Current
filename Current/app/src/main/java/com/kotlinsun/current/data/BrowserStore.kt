@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.room.Dao
+import androidx.room.ColumnInfo
 import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Insert
@@ -38,6 +39,8 @@ data class TabRecord(
     val url: String?,
     val title: String,
     val selected: Boolean,
+    @ColumnInfo(defaultValue = "0") val desktopMode: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val pinned: Boolean = false,
 )
 
 @Dao
@@ -154,7 +157,7 @@ interface DownloadDao {
 }
 
 @Database(entities = [TabRecord::class, HistoryRecord::class, BookmarkRecord::class,
-    DownloadRecord::class, LocalDownloadRecord::class], version = 3, exportSchema = false)
+    DownloadRecord::class, LocalDownloadRecord::class], version = 5, exportSchema = false)
 abstract class BrowserDatabase : RoomDatabase() {
     abstract fun tabDao(): TabDao
     abstract fun historyDao(): HistoryDao
@@ -174,6 +177,18 @@ private val migration1To2 = object : Migration(1, 2) {
 private val migration2To3 = object : Migration(2, 3) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS `local_downloads` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `url` TEXT NOT NULL, `fileName` TEXT NOT NULL, `mimeType` TEXT, `contentUri` TEXT NOT NULL, `createdAt` INTEGER NOT NULL)")
+    }
+}
+
+private val migration3To4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `tabs` ADD COLUMN `desktopMode` INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
+private val migration4To5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `tabs` ADD COLUMN `pinned` INTEGER NOT NULL DEFAULT 0")
     }
 }
 
@@ -222,7 +237,7 @@ class BrowserStore private constructor(context: Context) {
 
     private val application = context.applicationContext
     private val database = Room.databaseBuilder(application, BrowserDatabase::class.java, "browser.db")
-        .addMigrations(migration1To2, migration2To3).build()
+        .addMigrations(migration1To2, migration2To3, migration3To4, migration4To5).build()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val tabOperations = Channel<TabOperation>(Channel.UNLIMITED)
     private val stateOperations = Channel<StateOperation>(Channel.UNLIMITED)
@@ -249,34 +264,40 @@ class BrowserStore private constructor(context: Context) {
         }
         scope.launch {
             for (operation in stateOperations) {
-                when (operation) {
-                    is StateOperation.Write -> runCatching {
-                        writeStateNow(operation.id, operation.bytes)
-                    }.onFailure { Log.e("BrowserStore", "탭 상태 저장 실패", it) }
-                    is StateOperation.Delete -> runCatching {
-                        stateFile(operation.id).delete()
-                    }.onFailure { Log.e("BrowserStore", "탭 상태 삭제 실패", it) }
-                    is StateOperation.Read -> operation.result.complete(runCatching {
-                        val file = stateFile(operation.id)
-                        if (!file.baseFile.exists() || file.baseFile.length() > 256 * 1024) null
-                        else file.readFully()
-                    }.getOrNull())
-                    is StateOperation.WritePreview -> runCatching {
-                        writeAtomic(previewFile(operation.id), operation.bytes)
-                        trimPreviews()
-                    }.onFailure { Log.e("BrowserStore", "탭 미리보기 저장 실패", it) }
-                    is StateOperation.DeletePreview -> previewFile(operation.id).delete()
-                    is StateOperation.ReadPreview -> operation.result.complete(runCatching {
-                        val file = previewFile(operation.id)
-                        if (!file.baseFile.exists() || file.baseFile.length() > 128 * 1024) null else file.readFully()
-                    }.getOrNull())
-                    is StateOperation.PrunePreviews -> previewDirectory.listFiles()?.forEach { file ->
-                        if (file.name.substringBefore('.') !in operation.ids) file.delete()
+                try {
+                    when (operation) {
+                        is StateOperation.Write -> runCatching {
+                            writeStateNow(operation.id, operation.bytes)
+                        }.onFailure { Log.e("BrowserStore", "탭 상태 저장 실패", it) }
+                        is StateOperation.Delete -> runCatching {
+                            stateFile(operation.id).delete()
+                        }.onFailure { Log.e("BrowserStore", "탭 상태 삭제 실패", it) }
+                        is StateOperation.Read -> operation.result.complete(runCatching {
+                            readAtomic(stateFile(operation.id), 256 * 1024)
+                        }.getOrNull())
+                        is StateOperation.WritePreview -> runCatching {
+                            writeAtomic(previewFile(operation.id), operation.bytes)
+                            trimPreviews()
+                        }.onFailure { Log.e("BrowserStore", "탭 미리보기 저장 실패", it) }
+                        is StateOperation.DeletePreview -> previewFile(operation.id).delete()
+                        is StateOperation.ReadPreview -> operation.result.complete(runCatching {
+                            readAtomic(previewFile(operation.id), 128 * 1024)
+                        }.getOrNull())
+                        is StateOperation.PrunePreviews -> previewDirectory.listFiles()?.forEach { file ->
+                            if (file.name.substringBefore('.') !in operation.ids) file.delete()
+                        }
+                        is StateOperation.PruneStates -> stateDirectory.listFiles()?.forEach { file ->
+                            if (file.name.substringBefore('.') !in operation.ids) file.delete()
+                        }
+                        StateOperation.DeleteAllStates -> stateDirectory.listFiles()?.forEach { it.delete() }
                     }
-                    is StateOperation.PruneStates -> stateDirectory.listFiles()?.forEach { file ->
-                        if (file.name.substringBefore('.') !in operation.ids) file.delete()
+                } catch (error: Exception) {
+                    Log.e("BrowserStore", "탭 상태 작업 실패", error)
+                    when (operation) {
+                        is StateOperation.Read -> operation.result.complete(null)
+                        is StateOperation.ReadPreview -> operation.result.complete(null)
+                        else -> Unit
                     }
-                    StateOperation.DeleteAllStates -> stateDirectory.listFiles()?.forEach { it.delete() }
                 }
             }
         }
@@ -385,6 +406,9 @@ class BrowserStore private constructor(context: Context) {
     suspend fun loadBookmarks(): List<BookmarkRecord> = database.bookmarkDao().getAll()
     suspend fun searchBookmarks(query: String): List<BookmarkRecord> = database.bookmarkDao().search(query)
     suspend fun addBookmark(record: BookmarkRecord) = database.bookmarkDao().insert(record)
+    suspend fun importBookmarks(records: List<BookmarkRecord>) = database.withTransaction {
+        records.forEach { database.bookmarkDao().insert(it) }
+    }
     suspend fun updateBookmark(record: BookmarkRecord) = database.bookmarkDao().update(record)
     suspend fun deleteBookmark(id: String) = database.bookmarkDao().delete(id)
 
@@ -397,6 +421,11 @@ class BrowserStore private constructor(context: Context) {
 
     private fun writeStateNow(id: String, state: ByteArray) {
         writeAtomic(stateFile(id), state)
+    }
+
+    private fun readAtomic(file: AtomicFile, maxBytes: Int): ByteArray? = file.openRead().use { input ->
+        if (input.channel.size() > maxBytes) null
+        else input.readBytes().takeIf { it.size <= maxBytes }
     }
 
     private fun writeAtomic(file: AtomicFile, bytes: ByteArray) {

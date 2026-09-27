@@ -3,11 +3,14 @@ package com.kotlinsun.current
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Bundle
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.pdf.viewer.fragment.PdfViewerFragment
@@ -15,15 +18,22 @@ import androidx.pdf.viewer.fragment.PdfViewerFragment
 class CurrentPdfFragment : PdfViewerFragment() {
     override fun onLoadDocumentError(error: Throwable) {
         super.onLoadDocumentError(error)
-        context?.let {
-            Toast.makeText(it, R.string.pdf_open_error,
-                Toast.LENGTH_LONG).show()
-        }
+        (activity as? PdfActivity)?.showPdfError()
     }
 }
 
 class PdfActivity : AppCompatActivity() {
     companion object { const val EXTRA_PRIVATE = "private_pdf" }
+    private lateinit var pdfContainer: FrameLayout
+    private lateinit var errorMessage: TextView
+
+    fun showPdfError() {
+        runOnUiThread {
+            if (!::errorMessage.isInitialized || isFinishing || isDestroyed) return@runOnUiThread
+            pdfContainer.visibility = View.GONE
+            errorMessage.visibility = View.VISIBLE
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,7 +60,18 @@ class PdfActivity : AppCompatActivity() {
         }
         root.addView(back)
         root.addView(external)
-        root.addView(FrameLayout(this).apply { id = R.id.pdf_container },
+        errorMessage = TextView(this).apply {
+            text = getString(R.string.pdf_open_error)
+            gravity = Gravity.CENTER
+            textSize = 18f
+            val inset = (24 * resources.displayMetrics.density).toInt()
+            setPadding(inset, inset, inset, inset)
+            visibility = View.GONE
+        }
+        root.addView(errorMessage, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        pdfContainer = FrameLayout(this).apply { id = R.id.pdf_container }
+        root.addView(pdfContainer,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         val fragment = (supportFragmentManager.findFragmentByTag("pdf") as? PdfViewerFragment)
@@ -58,7 +79,7 @@ class PdfActivity : AppCompatActivity() {
                 supportFragmentManager.beginTransaction().replace(R.id.pdf_container, it, "pdf").commitNow()
             }
         runCatching { fragment.documentUri = uri }.onFailure {
-            Toast.makeText(this, R.string.pdf_open_error, Toast.LENGTH_LONG).show()
+            showPdfError()
         }
     }
 }

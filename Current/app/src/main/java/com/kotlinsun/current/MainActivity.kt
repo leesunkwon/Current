@@ -13,6 +13,7 @@ import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.ClipData
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
@@ -51,12 +52,22 @@ class MainActivity : ComponentActivity(), BrowserHost {
     override val activity: Activity get() = this
     private var pendingFile: FileSelectionRequest? = null
     private var cameraUri: Uri? = null
+    private var cameraFile: File? = null
     private var fileChoiceDialog: android.app.AlertDialog? = null
     private var pendingPermissions: ((Boolean) -> Unit)? = null
     private var requestedPermissions: Array<String> = emptyArray()
     private var filePickerInFlight = false
     private var permissionPromptInFlight = false
     private var roleCallback: ((Boolean?) -> Unit)? = null
+    private val bookmarkImportLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()) { uri ->
+        controller.readBookmarkFile(uri)
+    }
+
+    private val bookmarkExportLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("text/html")) { uri ->
+        controller.writeBookmarkFile(uri)
+    }
 
     private val fileLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         filePickerInFlight = false
@@ -73,7 +84,9 @@ class MainActivity : ComponentActivity(), BrowserHost {
             values.distinct().filter(::isReadableContentUri).take(if (request?.allowMultiple == true) 20 else 1)
                 .takeIf { it.isNotEmpty() }?.toTypedArray()
         } else null
-        cameraUri = null
+        clearCameraCapture(keepFile = request != null && cameraUri?.let { capture ->
+            uris?.any { it == capture }
+        } == true)
         request?.complete(uris)
         request?.let(controller::fileSelectionCompleted)
     }
@@ -104,7 +117,8 @@ class MainActivity : ComponentActivity(), BrowserHost {
         enableEdgeToEdge()
         controller = ViewModelProvider(this)[BrowserViewModel::class.java].controller
         File(cacheDir, "upload_capture").listFiles()?.filter {
-            System.currentTimeMillis() - it.lastModified() > 24L * 60 * 60 * 1000
+            it.name.startsWith("private-capture-") ||
+                System.currentTimeMillis() - it.lastModified() > 24L * 60 * 60 * 1000
         }?.forEach { it.delete() }
         controller.attach(this)
         if (controller.ui.value.activeMode == com.kotlinsun.current.engine.TabMode.PRIVATE)
@@ -227,7 +241,10 @@ class MainActivity : ComponentActivity(), BrowserHost {
                         2 -> runCatching { createCameraIntent(arrayOf("video/*")) }.getOrNull()
                         else -> picker
                     }
-                    if (intent == null) cancelFileSelection()
+                    if (intent == null) {
+                        cancelFileSelection()
+                        Toast.makeText(this, R.string.upload_picker_unavailable, Toast.LENGTH_LONG).show()
+                    }
                     else launchFileIntent(request, intent)
                 }
                 .setOnCancelListener { if (pendingFile === request) cancelFileSelection() }
@@ -248,9 +265,10 @@ class MainActivity : ComponentActivity(), BrowserHost {
             filePickerInFlight = false
             controller.fileResultFinished()
             pendingFile = null
-            cameraUri = null
+            clearCameraCapture()
             request.complete(null)
             controller.fileSelectionCompleted(request)
+            Toast.makeText(this, R.string.upload_picker_unavailable, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -260,6 +278,32 @@ class MainActivity : ComponentActivity(), BrowserHost {
         pendingFile?.complete(null)
         pendingFile?.let(controller::fileSelectionCompleted)
         pendingFile = null
+        clearCameraCapture()
+    }
+
+    override fun clearPrivateUploadCaptures(): Boolean {
+        val directory = File(cacheDir, "upload_capture")
+        val files = directory.listFiles() ?: return !directory.exists()
+        var cleared = true
+        files.filter { it.name.startsWith("private-capture-") }.forEach {
+            if (!runCatching { it.delete() || !it.exists() }.getOrDefault(false)) cleared = false
+        }
+        return cleared
+    }
+
+    override fun pickBookmarkFile(): Boolean = runCatching {
+        bookmarkImportLauncher.launch(arrayOf("text/html", "text/plain", "*/*"))
+        true
+    }.getOrDefault(false)
+
+    override fun createBookmarkFile(): Boolean = runCatching {
+        bookmarkExportLauncher.launch("current-bookmarks.html")
+        true
+    }.getOrDefault(false)
+
+    private fun clearCameraCapture(keepFile: Boolean = false) {
+        if (!keepFile) cameraFile?.let { runCatching { it.delete() } }
+        cameraFile = null
         cameraUri = null
     }
 
@@ -268,8 +312,17 @@ class MainActivity : ComponentActivity(), BrowserHost {
         val video = types.any { it.startsWith("video/") }
         if (!image && !video) return null
         val directory = File(cacheDir, "upload_capture").apply { mkdirs() }
-        val file = File.createTempFile("capture-", if (image) ".jpg" else ".mp4", directory)
-        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        val prefix = if (controller.ui.value.activeMode == com.kotlinsun.current.engine.TabMode.PRIVATE)
+            "private-capture-" else "capture-"
+        val file = File.createTempFile(prefix, if (image) ".jpg" else ".mp4", directory)
+        val uri = try {
+            FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        } catch (error: RuntimeException) {
+            file.delete()
+            throw error
+        }
+        cameraFile?.delete()
+        cameraFile = file
         cameraUri = uri
         return Intent(if (image) MediaStore.ACTION_IMAGE_CAPTURE else MediaStore.ACTION_VIDEO_CAPTURE).apply {
             putExtra(MediaStore.EXTRA_OUTPUT, uri)
@@ -309,6 +362,20 @@ class MainActivity : ComponentActivity(), BrowserHost {
     override fun share(url: String) {
         val intent = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, url)
         startActivity(Intent.createChooser(intent, getString(R.string.share_link_title)))
+    }
+
+    override fun shareFile(uri: Uri, mimeType: String?, fileName: String) {
+        val type = mimeType?.substringBefore(';')?.trim()?.takeIf { '/' in it }
+            ?: "application/octet-stream"
+        val send = Intent(Intent.ACTION_SEND).setType(type)
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        send.clipData = ClipData.newUri(contentResolver, fileName, uri)
+        val chooser = Intent.createChooser(send, getString(R.string.share_file_title))
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        chooser.clipData = send.clipData
+        runCatching { startActivity(chooser) }
+            .onFailure { Toast.makeText(this, R.string.file_share_error, Toast.LENGTH_SHORT).show() }
     }
 
     override fun openDownload(id: Long) {
@@ -381,10 +448,16 @@ class MainActivity : ComponentActivity(), BrowserHost {
         it.scheme?.lowercase() in setOf("http", "https") && !it.host.isNullOrBlank()
     }
 
-    override fun openExternal(url: String) {
+    override fun openExternal(url: String, privateMode: Boolean) {
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
         val scheme = uri.scheme?.lowercase() ?: return
         if (scheme in setOf("http", "https", "file", "content", "javascript", "data", "blob", "about")) return
+        val fallbackMode = if (privateMode) com.kotlinsun.current.engine.TabMode.PRIVATE
+            else com.kotlinsun.current.engine.TabMode.NORMAL
+        fun openFallback(value: String?) {
+            if (value != null) controller.newTab(value, fallbackMode)
+            else Toast.makeText(this, R.string.external_app_unavailable, Toast.LENGTH_LONG).show()
+        }
         val fallback: String?
         val external = if (scheme == "intent") {
             val parsed = runCatching { Intent.parseUri(url, Intent.URI_INTENT_SCHEME) }.getOrNull() ?: return
@@ -394,7 +467,7 @@ class MainActivity : ComponentActivity(), BrowserHost {
             if (dataScheme == null || dataScheme in setOf("file", "content", "javascript",
                     "data", "blob", "about", "intent") ||
                 (dataScheme in setOf("http", "https") && parsed.`package`.isNullOrBlank())) {
-                fallback?.let(controller::openUrlFromIntent)
+                openFallback(fallback)
                 return
             }
             Intent(Intent.ACTION_VIEW, parsed.data).apply { `package` = parsed.`package` }
@@ -410,11 +483,11 @@ class MainActivity : ComponentActivity(), BrowserHost {
         try {
             startActivity(external)
         } catch (_: ActivityNotFoundException) {
-            fallback?.let(controller::openUrlFromIntent)
+            openFallback(fallback)
         } catch (_: SecurityException) {
-            fallback?.let(controller::openUrlFromIntent)
+            openFallback(fallback)
         } catch (_: IllegalArgumentException) {
-            fallback?.let(controller::openUrlFromIntent)
+            openFallback(fallback)
         }
     }
 }

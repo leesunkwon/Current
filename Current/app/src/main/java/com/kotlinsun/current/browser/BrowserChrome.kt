@@ -61,6 +61,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,7 +84,7 @@ internal fun BrowserMenu(
     BackHandler(enabled = expanded) { onExpandedChange(false) }
     val configuration = LocalConfiguration.current
     val menuWidth = (configuration.screenWidthDp - 48).coerceIn(1, 336).dp
-    val menuHeight = (configuration.screenHeightDp - 150).coerceIn(1, 600).dp
+    val menuHeight = (configuration.screenHeightDp - 96).coerceIn(96, 600).dp
     val popupOffset = with(LocalDensity.current) { 56.dp.roundToPx() }
     val menuTitle = stringResource(R.string.browser_menu)
     fun perform(action: () -> Unit) {
@@ -224,7 +225,7 @@ internal fun BrowserFindBar(ui: BrowserUiState, controller: BrowserController) {
             Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close_find))
         }
     }
-    if (LocalConfiguration.current.screenWidthDp < 480) {
+    if (LocalConfiguration.current.let { it.screenWidthDp < 480 || it.fontScale >= 1.4f }) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 searchField(Modifier.weight(1f))
@@ -245,7 +246,8 @@ internal fun BrowserFindBar(ui: BrowserUiState, controller: BrowserController) {
 
 @Composable
 private fun BrowserMenuSection(title: String) {
-    Text(title, modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 4.dp),
+    Text(title, modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 4.dp)
+        .semantics { heading() },
         style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.onSurfaceVariant)
 }

@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -125,7 +126,8 @@ internal fun BrowserAddressField(
         DropdownMenu(expanded = editing && suggestionsVisible && ui.suggestions.isNotEmpty(),
             onDismissRequest = onDismissSuggestions,
             offset = DpOffset(0.dp, 8.dp),
-            modifier = Modifier.widthIn(max = 360.dp).heightIn(max = 320.dp),
+            modifier = Modifier.widthIn(max = 360.dp).heightIn(max =
+                if (LocalConfiguration.current.screenHeightDp < 480) 180.dp else 320.dp),
             properties = PopupProperties(focusable = false),
             shape = if (flat) RoundedCornerShape(16.dp) else RoundedCornerShape(24.dp),
             containerColor = MaterialTheme.colorScheme.surface,
