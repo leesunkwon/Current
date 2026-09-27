@@ -1,5 +1,11 @@
 package com.kotlinsun.current.browser
 
+import android.graphics.Color as AndroidColor
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.inputmethod.BaseInputConnection
+import android.view.inputmethod.EditorInfo
+import android.widget.EditText
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.text.KeyboardActions
@@ -9,6 +15,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -36,9 +44,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.viewinterop.AndroidView
+import com.kotlinsun.current.engine.TabMode
 import com.kotlinsun.current.R
 import com.kotlinsun.current.ui.theme.currentAccentTextColor
 import com.kotlinsun.current.ui.theme.currentPlaceholderColor
@@ -62,6 +73,10 @@ internal fun BrowserAddressField(
     val inputDescription = stringResource(R.string.address_input_description)
     val fieldShape = MaterialTheme.shapes.medium
     val addressInput: @Composable () -> Unit = {
+        if (ui.activeMode == TabMode.PRIVATE) {
+            PrivateAddressInput(value, inputDescription, onValueChange, onFocusChange,
+                onSubmit, isError, isHome || editing)
+        } else {
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
@@ -109,6 +124,7 @@ internal fun BrowserAddressField(
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
             keyboardActions = KeyboardActions(onGo = { onSubmit() }),
         )
+        }
     }
     Box(modifier) {
         if (flat) {
@@ -159,6 +175,69 @@ internal fun BrowserAddressField(
                     onClick = { onSuggestion(suggestion) },
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun PrivateAddressInput(
+    value: TextFieldValue,
+    description: String,
+    onValueChange: (TextFieldValue) -> Unit,
+    onFocusChange: (Boolean) -> Unit,
+    onSubmit: () -> Unit,
+    isError: Boolean,
+    showSubmit: Boolean,
+) {
+    val foreground = MaterialTheme.colorScheme.onSurface
+    val placeholder = MaterialTheme.colorScheme.onSurfaceVariant
+    val hint = stringResource(R.string.address_or_search)
+    val submit = stringResource(R.string.address_submit)
+    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
+        .padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(if (isError) Icons.Filled.ErrorOutline else Icons.Filled.Search,
+            contentDescription = null, modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        AndroidView(factory = { context ->
+            EditText(context).apply {
+                isSingleLine = true
+                setSelectAllOnFocus(true)
+                setBackgroundColor(AndroidColor.TRANSPARENT)
+                imeOptions = EditorInfo.IME_ACTION_GO or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+                setHint(hint)
+                contentDescription = description
+                setTextColor(android.graphics.Color.rgb((foreground.red * 255).toInt(),
+                    (foreground.green * 255).toInt(), (foreground.blue * 255).toInt()))
+                setHintTextColor(android.graphics.Color.rgb((placeholder.red * 255).toInt(),
+                    (placeholder.green * 255).toInt(), (placeholder.blue * 255).toInt()))
+                setOnEditorActionListener { _, actionId, _ ->
+                    if (actionId == EditorInfo.IME_ACTION_GO) { onSubmit(); true } else false
+                }
+                setOnFocusChangeListener { _, focused -> onFocusChange(focused) }
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                    override fun afterTextChanged(s: Editable?) {
+                        val text = s?.toString().orEmpty()
+                        val composingStart = s?.let(BaseInputConnection::getComposingSpanStart) ?: -1
+                        val composingEnd = s?.let(BaseInputConnection::getComposingSpanEnd) ?: -1
+                        onValueChange(TextFieldValue(text, TextRange(selectionStart.coerceIn(0, text.length),
+                            selectionEnd.coerceIn(0, text.length)),
+                            composition = if (composingStart >= 0 && composingEnd >= composingStart)
+                                TextRange(composingStart, composingEnd) else null))
+                    }
+                })
+            }
+        }, update = { input ->
+            input.hint = hint
+            input.contentDescription = description
+            if (input.text.toString() != value.text) {
+                input.setText(value.text)
+                input.setSelection(value.selection.end.coerceIn(0, value.text.length))
+            }
+        }, modifier = Modifier.weight(1f).heightIn(min = 48.dp))
+        if (showSubmit) IconButton(onClick = onSubmit, modifier = Modifier.size(48.dp)) {
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = submit)
         }
     }
 }

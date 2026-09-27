@@ -14,6 +14,8 @@ import android.print.PrintDocumentAdapter
 import android.util.Base64
 import android.view.View
 import android.view.ViewGroup
+import android.view.MotionEvent
+import android.webkit.ClientCertRequest
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.SafeBrowsingResponse
 import android.webkit.SslErrorHandler
@@ -43,6 +45,7 @@ import com.kotlinsun.current.engine.BlobReceiver
 import com.kotlinsun.current.engine.BlobTransfer
 import com.kotlinsun.current.engine.BLOB_TRANSFER_CANCELLED
 import com.kotlinsun.current.engine.BrowserEngine
+import com.kotlinsun.current.engine.ClientCertificateRequest
 import com.kotlinsun.current.engine.DownloadRequest
 import com.kotlinsun.current.engine.EngineCallbacks
 import com.kotlinsun.current.engine.EngineSession
@@ -53,6 +56,7 @@ import com.kotlinsun.current.engine.HttpAuthenticationRequest
 import com.kotlinsun.current.engine.JavaScriptDialogKind
 import com.kotlinsun.current.engine.JavaScriptDialogRequest
 import com.kotlinsun.current.engine.LinkTarget
+import com.kotlinsun.current.engine.NavigationEntry
 import com.kotlinsun.current.engine.PageError
 import com.kotlinsun.current.engine.PopupRequest
 import com.kotlinsun.current.engine.SessionConfig
@@ -62,6 +66,7 @@ import com.kotlinsun.current.engine.WebPermissionRequest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.ByteArrayOutputStream
+import java.io.ByteArrayInputStream
 import java.util.UUID
 import org.json.JSONObject
 
@@ -115,6 +120,10 @@ private class WebViewSession(
     private var approvedHttpUrl: String? = null
     private var initialPopupGestureExpiresAt = 0L
     private var activeBlob: BlobTransfer? = null
+    @Volatile private var trackingEnabled = config.trackingProtection
+    @Volatile private var trackingExceptions = config.trackingExceptions
+    @Volatile private var topLevelOrigin: String? = null
+    @Volatile private var topLevelHost: String? = null
     private val mobileUserAgent = webView.settings.userAgentString.orEmpty()
     override val view get() = webView
     override val userAgent get() = webView.settings.userAgentString.orEmpty()
@@ -164,6 +173,10 @@ private class WebViewSession(
                     WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_BROWSER)
             }
         }
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.PAYMENT_REQUEST)) {
+            runCatching { WebSettingsCompat.setPaymentRequestEnabled(webView.settings, true) }
+        }
+        webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_BOUND, true)
         applySettings(config.allowThirdPartyCookies, config.textZoom)
         setDesktopMode(config.desktopMode)
         webView.setFindListener { activeIndex, total, done ->
@@ -172,6 +185,16 @@ private class WebViewSession(
         // Blob transfers use a temporary MessagePort addressed to the active main-frame origin.
         // No JavaScript bridge is injected into unrelated pages or subframes.
         webView.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(view: WebView,
+                request: WebResourceRequest): WebResourceResponse? {
+                if (!trackingEnabled || request.isForMainFrame ||
+                    topLevelOrigin?.let { it in trackingExceptions } == true) return null
+                val pageHost = topLevelHost ?: return null
+                val resourceHost = request.url.host?.lowercase() ?: return null
+                if (!TrackerRules.shouldBlock(pageHost, resourceHost)) return null
+                return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 if (closed) return true
                 val uri = request.url
@@ -197,6 +220,13 @@ private class WebViewSession(
 
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 if (closed) return
+                val parsed = Uri.parse(url)
+                topLevelHost = parsed.host?.lowercase()
+                topLevelOrigin = parsed.scheme?.lowercase()?.let { scheme ->
+                    parsed.host?.lowercase()?.let { host ->
+                        "$scheme://$host" + if (parsed.port >= 0) ":${parsed.port}" else ""
+                    }
+                }
                 if (url.startsWith("https://", true) || url.startsWith("http://", true))
                     initialPopupGestureExpiresAt = 0
                 approvedHttpUrl = null
@@ -254,6 +284,22 @@ private class WebViewSession(
                     override val realm = requestRealm
                     override fun proceed(username: String, password: String) = completion.finish {
                         handler.proceed(username, password)
+                    }
+                    override fun cancel() = completion.cancel()
+                })
+            }
+
+            override fun onReceivedClientCertRequest(view: WebView, request: ClientCertRequest) {
+                if (closed) { request.ignore(); return }
+                val completion = Pending { request.ignore() }
+                callbacks.onClientCertificate(id, object : ClientCertificateRequest {
+                    override val host = request.host
+                    override val port = request.port
+                    override val keyTypes = request.keyTypes ?: emptyArray()
+                    override val principals = request.principals
+                    override fun proceed(privateKey: java.security.PrivateKey,
+                        chain: Array<java.security.cert.X509Certificate>) = completion.finish {
+                        request.proceed(privateKey, chain)
                     }
                     override fun cancel() = completion.cancel()
                 })
@@ -461,6 +507,28 @@ private class WebViewSession(
                 }
                 else -> false
             }
+        }
+        val pullDistance = 96f * context.resources.displayMetrics.density
+        var downX = 0f
+        var downY = 0f
+        var pullCandidate = false
+        webView.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.x
+                    downY = event.y
+                    pullCandidate = view.scrollY == 0 && !closed
+                }
+                MotionEvent.ACTION_UP -> {
+                    val dx = kotlin.math.abs(event.x - downX)
+                    val dy = event.y - downY
+                    if (pullCandidate && view.scrollY == 0 && dy > pullDistance &&
+                        dx < dy / 2f) callbacks.onPullToRefresh(id)
+                    pullCandidate = false
+                }
+                MotionEvent.ACTION_CANCEL -> pullCandidate = false
+            }
+            false
         }
     }
 
@@ -764,6 +832,21 @@ private class WebViewSession(
     override fun backUrl(): String? = if (closed) null else webView.copyBackForwardList().let {
         it.getItemAtIndex(it.currentIndex - 1)?.url
     }
+    override fun backHistory(): List<NavigationEntry> {
+        if (closed) return emptyList()
+        val history = webView.copyBackForwardList()
+        return ((history.currentIndex - 1) downTo 0).take(20).mapNotNull { index ->
+            history.getItemAtIndex(index)?.let { item ->
+                item.url?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
+                    ?.let { NavigationEntry(item.title.orEmpty().ifBlank { it }, it,
+                        index - history.currentIndex) }
+            }
+        }
+    }
+    override fun goBackOrForward(offset: Int) {
+        if (!closed && offset < 0 && webView.canGoBackOrForward(offset))
+            webView.goBackOrForward(offset)
+    }
     override fun forwardUrl(): String? = if (closed) null else webView.copyBackForwardList().let {
         it.getItemAtIndex(it.currentIndex + 1)?.url
     }
@@ -780,6 +863,10 @@ private class WebViewSession(
     override fun resume() { if (!closed) webView.onResume() }
     override fun pauseTimers() { if (!closed) webView.pauseTimers() }
     override fun resumeTimers() { if (!closed) webView.resumeTimers() }
+    override fun applyTrackingProtection(enabled: Boolean, exceptions: Set<String>) {
+        trackingExceptions = exceptions.toSet()
+        trackingEnabled = enabled
+    }
 
     override fun saveState(maxBytes: Int): ByteArray? {
         if (closed || !WebViewFeature.isFeatureSupported(WebViewFeature.SAVE_STATE)) return null

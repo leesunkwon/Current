@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.room.Dao
 import androidx.room.ColumnInfo
@@ -267,6 +268,9 @@ private val textZoomKey = intPreferencesKey("text_zoom")
 private val thirdPartyCookiesKey = booleanPreferencesKey("third_party_cookies")
 private val suggestionCutoffKey = longPreferencesKey("suggestion_cutoff")
 private val onboardingSeenKey = booleanPreferencesKey("onboarding_seen")
+private val homePageKey = stringPreferencesKey("home_page_url")
+private val trackingProtectionKey = booleanPreferencesKey("tracking_protection")
+private val trackingExceptionsKey = stringSetPreferencesKey("tracking_exceptions")
 
 data class BrowserPreferences(
     val searchEngine: String = "GOOGLE",
@@ -275,6 +279,9 @@ data class BrowserPreferences(
     val thirdPartyCookies: Boolean = false,
     val suggestionCutoff: Long = 0,
     val onboardingSeen: Boolean? = null,
+    val homePageUrl: String? = null,
+    val trackingProtection: Boolean = false,
+    val trackingExceptions: Set<String> = emptySet(),
 )
 
 class BrowserStore private constructor(context: Context) {
@@ -392,6 +399,9 @@ class BrowserStore private constructor(context: Context) {
             thirdPartyCookies = it[thirdPartyCookiesKey] ?: false,
             suggestionCutoff = it[suggestionCutoffKey] ?: 0,
             onboardingSeen = it[onboardingSeenKey],
+            homePageUrl = it[homePageKey],
+            trackingProtection = it[trackingProtectionKey] ?: false,
+            trackingExceptions = it[trackingExceptionsKey] ?: emptySet(),
         )
     }.first()
 
@@ -409,6 +419,20 @@ class BrowserStore private constructor(context: Context) {
 
     fun saveThirdPartyCookies(value: Boolean) {
         scope.launch { application.browserSettings.edit { it[thirdPartyCookiesKey] = value } }
+    }
+
+    fun saveHomePage(url: String?) {
+        scope.launch { application.browserSettings.edit {
+            if (url == null) it.remove(homePageKey) else it[homePageKey] = url
+        } }
+    }
+
+    fun saveTrackingProtection(enabled: Boolean) {
+        scope.launch { application.browserSettings.edit { it[trackingProtectionKey] = enabled } }
+    }
+
+    fun saveTrackingExceptions(origins: Set<String>) {
+        scope.launch { application.browserSettings.edit { it[trackingExceptionsKey] = origins } }
     }
 
     fun saveSuggestionCutoff(value: Long) {

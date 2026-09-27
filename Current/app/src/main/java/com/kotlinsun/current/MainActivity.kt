@@ -1,6 +1,9 @@
 package com.kotlinsun.current
 
 import android.app.Activity
+import android.app.KeyguardManager
+import android.app.PictureInPictureParams
+import android.app.SearchManager
 import android.app.DownloadManager
 import android.app.role.RoleManager
 import android.Manifest
@@ -9,6 +12,10 @@ import android.print.PrintAttributes
 import android.print.PrintDocumentAdapter
 import android.print.PrintManager
 import android.view.WindowManager
+import android.view.SurfaceView
+import android.view.TextureView
+import android.view.View
+import android.view.ViewGroup
 import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.content.BroadcastReceiver
@@ -19,6 +26,13 @@ import android.content.IntentFilter
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
+import android.os.CancellationSignal
+import android.hardware.biometrics.BiometricPrompt
+import android.hardware.biometrics.BiometricManager
+import android.security.KeyChain
+import android.security.KeyChainAliasCallback
+import android.provider.Settings
+import android.util.Rational
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import android.widget.Toast
@@ -32,6 +46,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Box
@@ -57,13 +72,22 @@ import com.kotlinsun.current.browser.BrowserScreen
 import com.kotlinsun.current.browser.BrowserViewModel
 import com.kotlinsun.current.browser.ThemeChoice
 import com.kotlinsun.current.engine.FileSelectionRequest
+import com.kotlinsun.current.engine.ClientCertificateRequest
+import com.kotlinsun.current.engine.TabMode
 import com.kotlinsun.current.ui.theme.CurrentTheme
 import java.io.File
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
 
 class MainActivity : ComponentActivity(), BrowserHost {
+    companion object {
+        const val ACTION_NEW_TAB = "com.kotlinsun.current.action.NEW_TAB"
+        const val ACTION_PRIVATE_TAB = "com.kotlinsun.current.action.PRIVATE_TAB"
+    }
     private lateinit var controller: BrowserController
     override val activity: Activity get() = this
     private var pendingFile: FileSelectionRequest? = null
@@ -75,6 +99,9 @@ class MainActivity : ComponentActivity(), BrowserHost {
     private var filePickerInFlight = false
     private var permissionPromptInFlight = false
     private var roleCallback: ((Boolean?) -> Unit)? = null
+    private var clientCertificate: ClientCertificateRequest? = null
+    private var privateAuthSignal: CancellationSignal? = null
+    private var pictureInPicture = mutableStateOf(false)
     private val bookmarkImportLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()) { uri ->
         controller.readBookmarkFile(uri)
@@ -141,11 +168,17 @@ class MainActivity : ComponentActivity(), BrowserHost {
             window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         val initialUrl = if (savedInstanceState == null && intent.action == Intent.ACTION_VIEW)
             intent.dataString?.takeIf(::isWebUrl) else null
-        val sharedText = if (savedInstanceState == null && intent.action == Intent.ACTION_SEND)
-            intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.take(2048) else null
-        controller.start(initialUrl, skipOnboarding = initialUrl != null || !sharedText.isNullOrBlank())
-        if (savedInstanceState == null && intent.action == Intent.ACTION_SEND) {
+        val sharedText = if (savedInstanceState == null) incomingText(intent) else null
+        val shortcut = savedInstanceState == null && intent.action in setOf(ACTION_NEW_TAB, ACTION_PRIVATE_TAB)
+        controller.start(initialUrl, skipOnboarding = initialUrl != null ||
+            !sharedText.isNullOrBlank() || shortcut)
+        if (savedInstanceState == null) {
             sharedText?.let(controller::openInputFromIntent)
+            if (shortcut) lifecycleScope.launch {
+                controller.ui.first { it.ready }
+                controller.newTab(mode = if (intent.action == ACTION_PRIVATE_TAB)
+                    TabMode.PRIVATE else TabMode.NORMAL)
+            }
         }
         lifecycleScope.launch {
             controller.ui.collect { state ->
@@ -187,7 +220,9 @@ class MainActivity : ComponentActivity(), BrowserHost {
                     }
                 }
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                    Box(Modifier.fillMaxSize().graphicsLayer {
+                    if (pictureInPicture.value && ui.fullScreenView == null) {
+                        Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black))
+                    } else Box(Modifier.fillMaxSize().graphicsLayer {
                         val amount = backProgress.coerceIn(0f, 1f)
                         scaleX = 1f - amount * 0.035f
                         scaleY = 1f - amount * 0.035f
@@ -213,11 +248,20 @@ class MainActivity : ComponentActivity(), BrowserHost {
         setIntent(intent)
         when (intent.action) {
             Intent.ACTION_VIEW -> intent.dataString?.takeIf(::isWebUrl)?.let(controller::openUrlFromIntent)
-            Intent.ACTION_SEND -> intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.take(2048)
-                ?.let(controller::openInputFromIntent)
+            Intent.ACTION_SEND, Intent.ACTION_PROCESS_TEXT, Intent.ACTION_WEB_SEARCH ->
+                incomingText(intent)?.let(controller::openInputFromIntent)
+            ACTION_NEW_TAB -> controller.newTab(mode = TabMode.NORMAL)
+            ACTION_PRIVATE_TAB -> controller.newTab(mode = TabMode.PRIVATE)
             Intent.ACTION_MAIN -> controller.onNormalLaunch()
         }
     }
+
+    private fun incomingText(value: Intent): String? = when (value.action) {
+        Intent.ACTION_SEND -> value.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+        Intent.ACTION_PROCESS_TEXT -> value.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
+        Intent.ACTION_WEB_SEARCH -> value.getStringExtra(SearchManager.QUERY)
+        else -> null
+    }?.take(2048)?.takeIf { it.isNotBlank() }
 
     override fun onStop() {
         controller.onStop()
@@ -229,12 +273,41 @@ class MainActivity : ComponentActivity(), BrowserHost {
         if (::controller.isInitialized) controller.onResume()
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (::controller.isInitialized) controller.onTrimMemory(level)
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        val videoView = controller.ui.value.fullScreenView
+        if (!isInPictureInPictureMode && videoView != null && hasVideoSurface(videoView) &&
+            controller.ui.value.activeMode == TabMode.NORMAL) {
+            runCatching { enterPictureInPictureMode(PictureInPictureParams.Builder()
+                .setAspectRatio(Rational(16, 9)).build()) }
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean,
+        newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        pictureInPicture.value = isInPictureInPictureMode
+    }
+
+    private fun hasVideoSurface(view: View): Boolean = when (view) {
+        is SurfaceView, is TextureView -> true
+        is ViewGroup -> (0 until view.childCount).any { hasVideoSurface(view.getChildAt(it)) }
+        else -> false
+    }
+
     override fun onDestroy() {
         unregisterReceiver(downloadReceiver)
         cancelFileSelection()
         pendingPermissions?.invoke(false)
         pendingPermissions = null
         roleCallback = null
+        cancelClientCertificateSelection()
+        cancelPrivateAuthentication()
         controller.detach()
         super.onDestroy()
     }
@@ -403,6 +476,80 @@ class MainActivity : ComponentActivity(), BrowserHost {
         }
     }
 
+    override fun chooseClientCertificate(request: ClientCertificateRequest) {
+        if (clientCertificate != null) { request.cancel(); return }
+        clientCertificate = request
+        runCatching {
+            KeyChain.choosePrivateKeyAlias(this, KeyChainAliasCallback { alias ->
+                lifecycleScope.launch {
+                    if (clientCertificate !== request) return@launch
+                    if (alias == null) {
+                        clientCertificate = null
+                        request.cancel()
+                        return@launch
+                    }
+                    val credentials = withContext(Dispatchers.IO) { runCatching {
+                        KeyChain.getPrivateKey(applicationContext, alias) to
+                            KeyChain.getCertificateChain(applicationContext, alias)
+                    }.getOrNull() }
+                    if (clientCertificate !== request) return@launch
+                    clientCertificate = null
+                    val key = credentials?.first
+                    val chain = credentials?.second
+                    if (key != null && !chain.isNullOrEmpty()) request.proceed(key, chain)
+                    else request.cancel()
+                }
+            }, request.keyTypes, request.principals, request.host, request.port, null)
+        }.onFailure {
+            clientCertificate = null
+            request.cancel()
+        }
+    }
+
+    override fun cancelClientCertificateSelection() {
+        clientCertificate?.cancel()
+        clientCertificate = null
+    }
+
+    override fun canAuthenticatePrivate(): Boolean =
+        (getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager)?.isDeviceSecure == true
+
+    @Suppress("DEPRECATION")
+    override fun authenticatePrivate(callback: (Boolean) -> Unit) {
+        if (!canAuthenticatePrivate()) { callback(false); return }
+        privateAuthSignal?.cancel()
+        val signal = CancellationSignal()
+        privateAuthSignal = signal
+        val prompt = BiometricPrompt.Builder(this)
+            .setTitle(getString(R.string.private_unlock_title))
+            .setSubtitle(getString(R.string.private_unlock_message))
+        if (Build.VERSION.SDK_INT >= 30) prompt.setAllowedAuthenticators(
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+        else prompt.setDeviceCredentialAllowed(true)
+        runCatching { prompt.build().authenticate(signal, mainExecutor,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    if (privateAuthSignal !== signal) return
+                    privateAuthSignal = null
+                    callback(true)
+                }
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    if (privateAuthSignal !== signal) return
+                    privateAuthSignal = null
+                    callback(false)
+                }
+            }) }.onFailure {
+            if (privateAuthSignal === signal) privateAuthSignal = null
+            callback(false)
+        }
+    }
+
+    override fun cancelPrivateAuthentication() {
+        privateAuthSignal?.cancel()
+        privateAuthSignal = null
+    }
+
     override fun setFullscreen(enabled: Boolean) {
         val insets = WindowInsetsControllerCompat(window, window.decorView)
         if (enabled) insets.hide(WindowInsetsCompat.Type.systemBars())
@@ -441,6 +588,17 @@ class MainActivity : ComponentActivity(), BrowserHost {
     override fun openDownloadsFolder() {
         runCatching { startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS)) }
             .onFailure { Toast.makeText(this, R.string.downloads_folder_unavailable, Toast.LENGTH_LONG).show() }
+    }
+
+    override fun openWebViewSettings() {
+        val packageName = runCatching { android.webkit.WebView.getCurrentWebViewPackage()?.packageName }
+            .getOrNull()
+        val target = packageName?.let {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$it"))
+        } ?: Intent(Settings.ACTION_SETTINGS)
+        runCatching { startActivity(target) }
+            .onFailure { Toast.makeText(this, R.string.webview_settings_unavailable,
+                Toast.LENGTH_LONG).show() }
     }
 
     override fun openPdf(id: Long, privateMode: Boolean) {

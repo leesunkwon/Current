@@ -333,4 +333,24 @@
     <string name="back_preview_page">이전 페이지</string>
     <string name="back_preview_tab">현재 탭 닫기</string>
     <string name="back_preview_new_tab">새 탭 페이지로 돌아가기</string>
+    <string name="webview_missing_error">시스템 WebView를 사용할 수 없습니다. WebView를 사용 설정하거나 업데이트한 뒤 다시 시도하세요.</string>
+    <string name="webview_settings">WebView 설정 열기</string>
+    <string name="webview_settings_unavailable">설정 화면을 열 수 없습니다.</string>
+    <string name="private_unlock_title">시크릿 탭 잠금 해제</string>
+    <string name="private_unlock_message">기기 잠금으로 본인임을 확인하세요.</string>
+    <string name="private_unlock_retry">다시 잠금 해제</string>
+    <string name="private_unlock_leave">일반 탭으로 이동</string>
+    <string name="private_lock_unavailable">기기 화면 잠금을 설정하면 앱 복귀 시 시크릿 탭을 잠글 수 있습니다.</string>
+    <string name="home_page_setting">홈페이지</string>
+    <string name="home_page_default">새 탭 페이지</string>
+    <string name="home_page_hint">주소를 입력하거나 비워 두면 새 탭 페이지를 사용합니다.</string>
+    <string name="home_page_invalid">올바른 웹 주소를 입력하세요.</string>
+    <string name="go_home">홈으로 이동</string>
+    <string name="back_history">뒤로 가기 기록</string>
+    <string name="tracking_protection">추적기 차단</string>
+    <string name="tracking_protection_note">알려진 일부 제3자 추적 요청을 차단합니다. 사이트 기능에 영향을 줄 수 있습니다.</string>
+    <string name="tracking_exception_allow">이 사이트에서 차단 끄기</string>
+    <string name="tracking_exception_remove">이 사이트에서 다시 차단</string>
+    <string name="shortcut_new_tab">새 탭</string>
+    <string name="shortcut_private_tab">시크릿 탭</string>
 </resources>

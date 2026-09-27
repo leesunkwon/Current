@@ -15,7 +15,11 @@ data class SessionConfig(
     val allowThirdPartyCookies: Boolean = false,
     val textZoom: Int = 100,
     val desktopMode: Boolean = false,
+    val trackingProtection: Boolean = false,
+    val trackingExceptions: Set<String> = emptySet(),
 )
+
+data class NavigationEntry(val title: String, val url: String, val offset: Int)
 
 interface BlobTransfer {
     fun cancel()
@@ -91,6 +95,15 @@ interface HttpAuthenticationRequest {
     fun cancel()
 }
 
+interface ClientCertificateRequest {
+    val host: String
+    val port: Int
+    val keyTypes: Array<String>
+    val principals: Array<java.security.Principal>?
+    fun proceed(privateKey: java.security.PrivateKey, chain: Array<java.security.cert.X509Certificate>)
+    fun cancel()
+}
+
 interface FullScreenRequest {
     val view: View
     fun close()
@@ -103,6 +116,8 @@ interface EngineSession {
     val userAgent: String
     fun load(url: String)
     fun backUrl(): String?
+    fun backHistory(): List<NavigationEntry>
+    fun goBackOrForward(offset: Int)
     fun forwardUrl(): String?
     fun goBack()
     fun goForward()
@@ -113,6 +128,7 @@ interface EngineSession {
     fun pauseTimers()
     fun resumeTimers()
     fun applySettings(allowThirdPartyCookies: Boolean, textZoom: Int)
+    fun applyTrackingProtection(enabled: Boolean, exceptions: Set<String>)
     fun setDesktopMode(enabled: Boolean)
     fun find(text: String)
     fun findNext(forward: Boolean)
@@ -153,6 +169,8 @@ interface EngineCallbacks {
     fun onPermission(sessionId: String, request: WebPermissionRequest)
     fun onPermissionCanceled(sessionId: String, request: WebPermissionRequest)
     fun onHttpAuthentication(sessionId: String, request: HttpAuthenticationRequest)
+    fun onClientCertificate(sessionId: String, request: ClientCertificateRequest)
+    fun onPullToRefresh(sessionId: String)
 }
 
 interface BrowserEngine {

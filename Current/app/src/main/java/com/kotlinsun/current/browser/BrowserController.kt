@@ -8,6 +8,8 @@ import android.net.Uri
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.content.ComponentCallbacks2
+import android.webkit.WebView
 import android.print.PrintDocumentAdapter
 import android.provider.MediaStore
 import android.webkit.WebSettings
@@ -22,6 +24,7 @@ import com.kotlinsun.current.engine.BlobReceiver
 import com.kotlinsun.current.engine.BlobTransfer
 import com.kotlinsun.current.engine.BLOB_TRANSFER_CANCELLED
 import com.kotlinsun.current.engine.BrowserEngine
+import com.kotlinsun.current.engine.ClientCertificateRequest
 import com.kotlinsun.current.engine.DownloadRequest
 import com.kotlinsun.current.engine.EngineCallbacks
 import com.kotlinsun.current.engine.EngineSession
@@ -50,10 +53,8 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
-import java.util.Locale
 import java.io.File
 import java.io.FileOutputStream
-import java.io.ByteArrayOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 
 interface BrowserHost {
@@ -65,9 +66,15 @@ interface BrowserHost {
     fun cancelFileSelection()
     fun clearPrivateUploadCaptures(): Boolean
     fun requestPermissions(permissions: Array<String>, callback: (Boolean) -> Unit)
+    fun chooseClientCertificate(request: ClientCertificateRequest)
+    fun cancelClientCertificateSelection()
+    fun canAuthenticatePrivate(): Boolean
+    fun authenticatePrivate(callback: (Boolean) -> Unit)
+    fun cancelPrivateAuthentication()
     fun setFullscreen(enabled: Boolean)
     fun openDownload(id: Long)
     fun openDownloadsFolder()
+    fun openWebViewSettings()
     fun openPdf(id: Long, privateMode: Boolean)
     fun openLocalFile(uri: Uri, mimeType: String?, privateMode: Boolean)
     fun print(adapter: PrintDocumentAdapter, jobName: String)
@@ -138,8 +145,12 @@ class BrowserController(
     private val pendingHttpRedirects = mutableMapOf<String, String>()
     private var pendingExternalSessionId: String? = null
     private var foreground = false
+    private var privateUnlockGeneration = 0
+    private var privateUnlockInFlight = false
+    private var pendingClientCertificate: Pair<String, ClientCertificateRequest>? = null
     private val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
     private val downloadRepository = DownloadRepository(context, store, downloadManager)
+    private val bookmarkBackupService = BookmarkBackupService(context, store)
     private val tabRestoration = TabRestoration(store)
 
     fun fileResultStarted() { awaitingFileResult = true }
@@ -149,10 +160,15 @@ class BrowserController(
 
     fun attach(value: BrowserHost) {
         host = value
+        mutableUi.value = mutableUi.value.copy(privateLockAvailable = value.canAuthenticatePrivate())
         if (mutableUi.value.ready) ensureSelectedSession()
     }
 
     fun detach() {
+        cancelClientCertificate()
+        privateUnlockGeneration++
+        privateUnlockInFlight = false
+        host?.cancelPrivateAuthentication()
         closeFind()
         activeBlob?.second?.cancel()
         activeBlob = null
@@ -229,6 +245,11 @@ class BrowserController(
                 themeChoice = ThemeChoice.entries.firstOrNull { it.name == preferences?.theme } ?: ThemeChoice.SYSTEM,
                 textZoom = preferences?.textZoom?.coerceIn(75, 200) ?: 100,
                 allowThirdPartyCookies = preferences?.thirdPartyCookies ?: false)
+            mutableUi.value = mutableUi.value.copy(
+                homePageUrl = preferences?.homePageUrl,
+                trackingProtection = preferences?.trackingProtection ?: false,
+                trackingExceptions = preferences?.trackingExceptions ?: emptySet(),
+                privateLockAvailable = host?.canAuthenticatePrivate() == true)
             mutableUi.value = mutableUi.value.copy(savedSitePermissions = permissionRecords)
             pendingBookmarkPreview?.let { preview ->
                 mutableUi.value = mutableUi.value.copy(page = BrowserPage.BOOKMARKS,
@@ -336,9 +357,15 @@ class BrowserController(
         session?.load(url)
     }
 
-    fun newTab(url: String? = null, mode: TabMode = mutableUi.value.activeMode, foreground: Boolean = true) {
-        if (url != null && requestHttp(url) { newTabApproved(url, mode, foreground) }) return
-        newTabApproved(url, mode, foreground)
+    fun newTab(url: String? = null, mode: TabMode = mutableUi.value.activeMode,
+               foreground: Boolean = true, useHomePage: Boolean = true) {
+        val destination = url ?: mutableUi.value.homePageUrl.takeIf {
+            useHomePage && mode == TabMode.NORMAL
+        }
+        if (destination != null && requestHttp(destination) {
+                newTabApproved(destination, mode, foreground)
+            }) return
+        newTabApproved(destination, mode, foreground)
     }
 
     private fun newTabApproved(url: String?, mode: TabMode, foreground: Boolean) {
@@ -377,6 +404,7 @@ class BrowserController(
             it.allowHttpOnce(url)
             it.load(url)
         }
+        if (foreground && mode == TabMode.PRIVATE) requestPrivateUnlock()
     }
 
     fun switchMode(mode: TabMode) {
@@ -385,6 +413,12 @@ class BrowserController(
             return
         }
         if (mode == mutableUi.value.activeMode) return
+        if (mode == TabMode.NORMAL && privateUnlockInFlight) {
+            privateUnlockGeneration++
+            privateUnlockInFlight = false
+            host?.cancelPrivateAuthentication()
+        }
+        cancelClientCertificate()
         closeFind()
         clearSuggestions()
         dismissExternal()
@@ -403,11 +437,13 @@ class BrowserController(
             publishClosedTabs()
             ensureSelectedSession()
         }
+        if (mode == TabMode.PRIVATE) requestPrivateUnlock()
     }
 
     fun selectTab(id: String) {
         val selected = tab(id) ?: return
         if (id != mutableUi.value.selectedId) {
+            cancelClientCertificate()
             closeFind()
             clearSuggestions()
             dismissExternal()
@@ -432,10 +468,12 @@ class BrowserController(
         val pendingHttp = pendingHttpRedirects.remove(id)
         ensureSelectedSession()
         pendingHttp?.let { onHttpNavigation(id, it) }
+        if (selected.mode == TabMode.PRIVATE) requestPrivateUnlock()
     }
 
     fun closeTab(id: String) {
         val closing = tab(id) ?: return
+        if (pendingClientCertificate?.first == id) cancelClientCertificate()
         if (pendingExternalSessionId == id) dismissExternal()
         if (mutableUi.value.selectedId == id) closeFind()
         if (mutableUi.value.selectedId == id) clearSuggestions()
@@ -480,6 +518,10 @@ class BrowserController(
             selectedPrivateId = nextPrivate, activeMode = nextMode,
             lastClosedTabId = if (closing.mode == TabMode.PRIVATE && nextPrivate == null) null else id)
         if (nextPrivate == null) {
+            privateUnlockGeneration++
+            privateUnlockInFlight = false
+            host?.cancelPrivateAuthentication()
+            mutableUi.value = mutableUi.value.copy(privateLocked = false)
             pendingPdf.entries.removeAll { it.value }
             if (host?.clearPrivateUploadCaptures() == false)
                 notice(context.getString(R.string.private_upload_cleanup_error))
@@ -690,6 +732,82 @@ class BrowserController(
         }
     }
 
+    fun showBackHistory() {
+        val entries = sessionForSelectedTab()?.backHistory().orEmpty()
+        if (entries.isNotEmpty())
+            mutableUi.value = mutableUi.value.copy(dialog = BrowserDialog.BackHistory(entries))
+    }
+
+    fun navigateBackHistory(offset: Int) {
+        val dialog = mutableUi.value.dialog as? BrowserDialog.BackHistory ?: return
+        val entry = dialog.entries.firstOrNull { it.offset == offset } ?: return
+        mutableUi.value = mutableUi.value.copy(dialog = null)
+        val session = sessionForSelectedTab() ?: return
+        val action: () -> Unit = {
+            session.allowHttpOnce(entry.url)
+            session.goBackOrForward(offset)
+        }
+        if (!requestHttp(entry.url, action)) action()
+    }
+
+    fun goHome() {
+        val selected = mutableUi.value.selectedId ?: return
+        val home = mutableUi.value.homePageUrl
+        if (home == null) returnToNewTab() else loadTab(selected, home)
+        mutableUi.value = mutableUi.value.copy(page = BrowserPage.WEB)
+    }
+
+    fun saveHomePage(input: String): Boolean {
+        val trimmed = input.trim()
+        if (trimmed.isBlank()) {
+            mutableUi.value = mutableUi.value.copy(homePageUrl = null)
+            store.saveHomePage(null)
+            return true
+        }
+        if (trimmed.any { it.isWhitespace() } ||
+            !(trimmed.contains('.') || trimmed.startsWith("http://", true) ||
+                trimmed.startsWith("https://", true) || trimmed.startsWith("localhost", true))) return false
+        val url = AddressResolver.resolve(trimmed, mutableUi.value.searchEngine) ?: return false
+        if (!isWebUrl(url)) return false
+        mutableUi.value = mutableUi.value.copy(homePageUrl = url)
+        store.saveHomePage(url)
+        return true
+    }
+
+    fun changeTrackingProtection(enabled: Boolean) {
+        mutableUi.value = mutableUi.value.copy(trackingProtection = enabled)
+        store.saveTrackingProtection(enabled)
+        sessions.forEach { (id, session) ->
+            session.applyTrackingProtection(enabled, if (tab(id)?.mode == TabMode.PRIVATE)
+                emptySet() else mutableUi.value.trackingExceptions)
+        }
+    }
+
+    fun toggleTrackingException() {
+        if (mutableUi.value.activeMode != TabMode.NORMAL) return
+        val origin = mutableUi.value.selectedTab?.url?.let(::trackingOrigin) ?: return
+        val updated = mutableUi.value.trackingExceptions.toMutableSet().apply {
+            if (!add(origin)) remove(origin)
+        }
+        mutableUi.value = mutableUi.value.copy(trackingExceptions = updated)
+        store.saveTrackingExceptions(updated)
+        sessions.forEach { (id, session) ->
+            if (tab(id)?.mode == TabMode.NORMAL)
+                session.applyTrackingProtection(mutableUi.value.trackingProtection, updated)
+        }
+    }
+
+    fun isCurrentSiteTrackingException(): Boolean = mutableUi.value.selectedTab?.url
+        ?.let(::trackingOrigin)?.let { it in mutableUi.value.trackingExceptions } ?: false
+
+    private fun trackingOrigin(url: String): String? = runCatching {
+        val uri = Uri.parse(url)
+        val scheme = uri.scheme?.lowercase() ?: return@runCatching null
+        val host = uri.host?.lowercase() ?: return@runCatching null
+        if (scheme !in setOf("http", "https") || uri.userInfo != null) return@runCatching null
+        "$scheme://$host" + if (uri.port >= 0) ":${uri.port}" else ""
+    }.getOrNull()
+
     fun goForward() {
         val session = sessionForSelectedTab() ?: return
         val url = session.forwardUrl()
@@ -767,6 +885,8 @@ class BrowserController(
 
     fun handleSystemBack() {
         when {
+            mutableUi.value.privateLocked && mutableUi.value.activeMode == TabMode.PRIVATE ->
+                leaveLockedPrivate()
             activeFullScreen != null -> exitFullscreen()
             mutableUi.value.findVisible -> closeFind()
             mutableUi.value.dialog != null -> cancelDialog()
@@ -779,7 +899,8 @@ class BrowserController(
 
     fun canHandleSystemBack(): Boolean {
         val state = mutableUi.value
-        return activeFullScreen != null || state.findVisible || state.dialog != null ||
+        return state.privateLocked && state.activeMode == TabMode.PRIVATE ||
+            activeFullScreen != null || state.findVisible || state.dialog != null ||
             state.linkTarget != null || state.pendingExternalUrl != null ||
             state.page != BrowserPage.WEB || state.selectedTab?.engine?.canGoBack == true ||
             state.visibleTabs.size > 1 || state.selectedTab?.mode == TabMode.PRIVATE ||
@@ -789,6 +910,8 @@ class BrowserController(
     fun backPreviewLabel(): String? {
         val state = mutableUi.value
         return when {
+            state.privateLocked && state.activeMode == TabMode.PRIVATE ->
+                context.getString(R.string.private_unlock_leave)
             activeFullScreen != null -> context.getString(R.string.back_preview_fullscreen)
             state.findVisible -> context.getString(R.string.back_preview_find)
             state.dialog != null || state.linkTarget != null || state.pendingExternalUrl != null ->
@@ -806,6 +929,15 @@ class BrowserController(
 
     fun onStop() {
         foreground = false
+        if (pendingClientCertificate?.first?.let { tab(it)?.mode == TabMode.PRIVATE } == true)
+            cancelClientCertificate()
+        if (mutableUi.value.tabs.any { it.mode == TabMode.PRIVATE } &&
+            host?.canAuthenticatePrivate() == true) {
+            mutableUi.value = mutableUi.value.copy(privateLocked = true)
+            privateUnlockGeneration++
+            privateUnlockInFlight = false
+            host?.cancelPrivateAuthentication()
+        }
         sessions.forEach { (id, session) -> snapshot(id, session); session.pause() }
         sessions.values.firstOrNull()?.pauseTimers()
         persistTabs()
@@ -815,8 +947,48 @@ class BrowserController(
         foreground = true
         ensureSelectedSession()
         sessions.values.firstOrNull()?.resumeTimers()
-        sessionForSelectedTab()?.resume()
+        if (!(mutableUi.value.privateLocked && mutableUi.value.activeMode == TabMode.PRIVATE))
+            sessionForSelectedTab()?.resume()
         if (mutableUi.value.page == BrowserPage.DOWNLOADS) refreshDownloads()
+        requestPrivateUnlock()
+    }
+
+    fun onTrimMemory(level: Int) {
+        if (level < ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) return
+        val selectedId = mutableUi.value.selectedId
+        sessions.keys.toList().filter { it != selectedId }.forEach { id ->
+            sessions[id]?.let { snapshot(id, it, preview = false) }
+            discardSession(id, save = false)
+        }
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
+            mutableUi.value = mutableUi.value.copy(tabs = mutableUi.value.tabs.map { tab ->
+                if (tab.id == selectedId) tab else tab.copy(preview = null)
+            })
+        }
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE) {
+            stateCache.keys.filter { it != selectedId }.forEach(stateCache::remove)
+        }
+    }
+
+    fun requestPrivateUnlock() {
+        if (!mutableUi.value.privateLocked || mutableUi.value.activeMode != TabMode.PRIVATE ||
+            privateUnlockInFlight || !foreground) return
+        val owner = host ?: return
+        privateUnlockInFlight = true
+        val generation = ++privateUnlockGeneration
+        owner.authenticatePrivate { unlocked ->
+            if (generation != privateUnlockGeneration) return@authenticatePrivate
+            privateUnlockInFlight = false
+            if (unlocked) {
+                mutableUi.value = mutableUi.value.copy(privateLocked = false)
+                ensureSelectedSession()
+                sessionForSelectedTab()?.resume()
+            }
+        }
+    }
+
+    fun leaveLockedPrivate() {
+        if (mutableUi.value.privateLocked) switchMode(TabMode.NORMAL)
     }
 
     private fun returnToNewTab() {
@@ -831,12 +1003,14 @@ class BrowserController(
 
     private fun ensureSelectedSession() {
         val selected = mutableUi.value.selectedTab ?: return
+        if (selected.mode == TabMode.PRIVATE && mutableUi.value.privateLocked) return
         if (selected.url != null && host != null) ensureSession(selected.id)?.resume()
     }
 
     private fun ensureSession(id: String, restoreSavedState: Boolean = true, protectedId: String? = null): EngineSession? {
         sessions[id]?.let { return it }
         val selected = tab(id) ?: return null
+        if (selected.mode == TabMode.PRIVATE && mutableUi.value.privateLocked) return null
         if (restoreSavedState && selected.url?.startsWith("http://", true) == true &&
             id !in approvedHttpRestores) {
             requestHttp(selected.url) {
@@ -853,14 +1027,23 @@ class BrowserController(
             allowThirdPartyCookies = selected.mode == TabMode.NORMAL && mutableUi.value.allowThirdPartyCookies,
             textZoom = (mutableUi.value.textZoom * context.resources.configuration.fontScale).toInt(),
             desktopMode = selected.desktopMode,
+            trackingProtection = mutableUi.value.trackingProtection,
+            trackingExceptions = if (selected.mode == TabMode.PRIVATE) emptySet()
+                else mutableUi.value.trackingExceptions,
         ), this) }
             .getOrElse {
+                val unavailable = runCatching { WebView.getCurrentWebViewPackage() == null }
+                    .getOrDefault(false)
+                if (unavailable) mutableUi.value = mutableUi.value.copy(webViewUnavailable = true)
                 updateTab(id) { tab ->
                     tab.copy(engine = tab.engine.copy(isLoading = false,
-                        error = PageError(context.getString(R.string.webview_open_error), tab.url)))
+                        error = PageError(context.getString(if (unavailable)
+                            R.string.webview_missing_error else R.string.webview_open_error), tab.url)))
                 }
                 return null
             }
+        if (mutableUi.value.webViewUnavailable)
+            mutableUi.value = mutableUi.value.copy(webViewUnavailable = false)
         sessions[id] = session
         approvedHttpRestores.remove(id)
         selected.url?.let(session::allowHttpOnce)
@@ -915,7 +1098,7 @@ class BrowserController(
         }
     }
 
-    private fun snapshot(id: String, session: EngineSession) {
+    private fun snapshot(id: String, session: EngineSession, preview: Boolean = true) {
         val selected = tab(id) ?: return
         if (restoreJobs[id] == null && session.state.value.error == null &&
             session.state.value.url != null) {
@@ -925,9 +1108,9 @@ class BrowserController(
                 if (selected.mode == TabMode.NORMAL) store.writeTabState(id, bytes)
             }
         }
-        session.capturePreview()?.let { preview ->
-            updateTab(id) { it.copy(preview = preview) }
-            if (selected.mode == TabMode.NORMAL) store.writePreview(id, preview)
+        if (preview) session.capturePreview()?.let { bytes ->
+            updateTab(id) { it.copy(preview = bytes) }
+            if (selected.mode == TabMode.NORMAL) store.writePreview(id, bytes)
         }
     }
 
@@ -1182,33 +1365,11 @@ class BrowserController(
         if (uri == null) return
         scope.launch {
             runCatching {
-                val parsed = withContext(Dispatchers.IO) {
-                    val bytes = ByteArrayOutputStream()
-                    val input = context.contentResolver.openInputStream(uri)
-                        ?: error("Cannot open bookmark file")
-                    input.use { stream ->
-                        val chunk = ByteArray(8192)
-                        while (true) {
-                            val count = stream.read(chunk)
-                            if (count < 0) break
-                            if (bytes.size() + count > BookmarkBackup.MAX_BYTES) error("Bookmark file too large")
-                            bytes.write(chunk, 0, count)
-                        }
-                    }
-                    BookmarkBackup.parseDocument(bytes.toString(Charsets.UTF_8.name()))
-                }
-                val entries = parsed.entries
-                if (entries.isEmpty() && parsed.folderPaths.isEmpty()) error("No supported bookmarks")
-                val existing = withContext(Dispatchers.IO) { store.loadBookmarks() }
-                    .mapTo(HashSet()) { BookmarkBackup.key(it.url) }
+                val parsed = bookmarkBackupService.read(uri)
+                if (parsed.entries.isEmpty() && parsed.folderPaths.isEmpty())
+                    error("No supported bookmarks")
                 pendingBookmarkImport = parsed
-                pendingBookmarkPreview = BookmarkImportPreview(
-                    total = entries.size,
-                    newCount = entries.count { BookmarkBackup.key(it.url) !in existing },
-                    duplicateCount = entries.count { BookmarkBackup.key(it.url) in existing },
-                    folderCount = parsed.folderPaths.size,
-                    sample = entries.take(5).map { it.title },
-                )
+                pendingBookmarkPreview = bookmarkBackupService.preview(parsed)
                 mutableUi.value = mutableUi.value.copy(page = BrowserPage.BOOKMARKS,
                     bookmarkImportPreview = pendingBookmarkPreview)
             }.onFailure { notice(context.getString(R.string.bookmark_import_error)) }
@@ -1223,43 +1384,10 @@ class BrowserController(
 
     fun confirmBookmarkImport() {
         val parsed = pendingBookmarkImport ?: return
-        val entries = parsed.entries
         cancelBookmarkImport()
         scope.launch {
             runCatching {
-                val imported = withContext(Dispatchers.IO) {
-                    val known = store.loadBookmarks().mapTo(HashSet()) { BookmarkBackup.key(it.url) }
-                    val folderIndex = store.loadBookmarkFolders().associateBy {
-                        it.parentId to it.name.lowercase(Locale.ROOT)
-                    }.toMutableMap()
-                    val now = System.currentTimeMillis()
-                    val additions = mutableListOf<BookmarkRecord>()
-                    val folders = mutableListOf<BookmarkFolderRecord>()
-                    fun resolveFolder(path: List<String>): String? {
-                        var parentId: String? = null
-                        path.forEach { name ->
-                            val key = parentId to name.lowercase(Locale.ROOT)
-                            val folder = folderIndex[key] ?: BookmarkFolderRecord(
-                                UUID.randomUUID().toString(), name, parentId,
-                                now + folders.size).also {
-                                folders.add(it)
-                                folderIndex[key] = it
-                            }
-                            parentId = folder.id
-                        }
-                        return parentId
-                    }
-                    parsed.folderPaths.forEach { resolveFolder(it) }
-                    entries.forEach { entry ->
-                        if (known.add(BookmarkBackup.key(entry.url))) {
-                            val parentId = resolveFolder(entry.folderPath)
-                            additions.add(BookmarkRecord(UUID.randomUUID().toString(), entry.url,
-                                entry.title, now + additions.size, folderId = parentId))
-                        }
-                    }
-                    store.importBookmarks(additions, folders)
-                    additions.size to folders.size
-                }
+                val imported = bookmarkBackupService.importBackup(parsed)
                 refreshBookmarks()
                 refreshQuickLinks()
                 notice(if (imported.second > 0)
@@ -1279,13 +1407,7 @@ class BrowserController(
         if (uri == null) return
         scope.launch {
             runCatching {
-                withContext(Dispatchers.IO) {
-                    val records = store.loadBookmarks()
-                    val folders = store.loadBookmarkFolders()
-                    val output = context.contentResolver.openOutputStream(uri, "wt")
-                        ?: error("Cannot create bookmark file")
-                    output.use { it.write(BookmarkBackup.export(records, folders).toByteArray(Charsets.UTF_8)) }
-                }
+                bookmarkBackupService.write(uri)
                 notice(context.getString(R.string.bookmark_export_result))
             }.onFailure { notice(context.getString(R.string.bookmark_export_error)) }
         }
@@ -1363,6 +1485,7 @@ class BrowserController(
     }
 
     fun openDownloadsFolder() { host?.openDownloadsFolder() }
+    fun openWebViewSettings() { host?.openWebViewSettings() }
 
     fun requestDeleteDownload(item: DownloadItem) {
         mutableUi.value = mutableUi.value.copy(dialog = BrowserDialog.DeleteDownload(item.record.id, item.record.fileName))
@@ -1540,6 +1663,11 @@ class BrowserController(
             it.sourceRes == R.string.bookmarks
         })
         recentlyClosed.clear()
+        mutableUi.value = mutableUi.value.copy(trackingExceptions = emptySet())
+        store.saveTrackingExceptions(emptySet())
+        sessions.forEach { (_, session) ->
+            session.applyTrackingProtection(mutableUi.value.trackingProtection, emptySet())
+        }
         savedPermissions.clear()
         mutableUi.value = mutableUi.value.copy(savedSitePermissions = emptyList())
         mutableUi.value = mutableUi.value.copy(lastClosedTabId = null)
@@ -1866,6 +1994,7 @@ class BrowserController(
     }
 
     override fun onNavigationStarted(sessionId: String) {
+        if (pendingClientCertificate?.first == sessionId) cancelClientCertificate()
         if (pendingExternalSessionId == sessionId) dismissExternal()
         pendingHttpRedirects.remove(sessionId)
         if (sessionId == mutableUi.value.selectedId) closeFind()
@@ -1931,7 +2060,7 @@ class BrowserController(
     override fun onPopupRequested(parentId: String, request: PopupRequest): Boolean {
         val parent = tab(parentId) ?: return false
         if (parentId != mutableUi.value.selectedId) return false
-        newTab(mode = parent.mode)
+        newTab(mode = parent.mode, useHomePage = false)
         val child = mutableUi.value.selectedTab?.takeIf {
             it.id != parentId && it.mode == parent.mode && it.url == null
         } ?: return false
@@ -1952,6 +2081,7 @@ class BrowserController(
 
     override fun onRendererGone(sessionId: String, session: EngineSession) {
         if (sessions[sessionId] !== session) return
+        if (pendingClientCertificate?.first == sessionId) cancelClientCertificate()
         if (sessionId == mutableUi.value.selectedId) closeFind()
         if (pendingFile?.first == sessionId) {
             host?.cancelFileSelection()
@@ -2062,6 +2192,51 @@ class BrowserController(
         pendingHttpAuthentication = request
         mutableUi.value = mutableUi.value.copy(dialog = BrowserDialog.HttpAuthentication(
             request.host, request.realm))
+    }
+
+    override fun onClientCertificate(sessionId: String, request: ClientCertificateRequest) {
+        if (sessionId != mutableUi.value.selectedId || mutableUi.value.privateLocked || host == null) {
+            request.cancel()
+            return
+        }
+        cancelClientCertificate()
+        val guarded = object : ClientCertificateRequest {
+            private var completed = false
+            override val host: String = request.host
+            override val port: Int = request.port
+            override val keyTypes: Array<String> = request.keyTypes
+            override val principals: Array<java.security.Principal>? = request.principals
+            override fun proceed(privateKey: java.security.PrivateKey,
+                chain: Array<java.security.cert.X509Certificate>) {
+                if (completed) return
+                completed = true
+                if (pendingClientCertificate?.second === this) pendingClientCertificate = null
+                if (sessions[sessionId] != null && mutableUi.value.selectedId == sessionId &&
+                    !mutableUi.value.privateLocked)
+                    request.proceed(privateKey, chain)
+                else request.cancel()
+            }
+            override fun cancel() {
+                if (completed) return
+                completed = true
+                if (pendingClientCertificate?.second === this) pendingClientCertificate = null
+                request.cancel()
+            }
+        }
+        pendingClientCertificate = sessionId to guarded
+        host?.chooseClientCertificate(guarded)
+    }
+
+    private fun cancelClientCertificate() {
+        pendingClientCertificate?.second?.cancel()
+        pendingClientCertificate = null
+        host?.cancelClientCertificateSelection()
+    }
+
+    override fun onPullToRefresh(sessionId: String) {
+        if (sessionId == mutableUi.value.selectedId && mutableUi.value.page == BrowserPage.WEB &&
+            !mutableUi.value.privateLocked && activeFullScreen == null &&
+            mutableUi.value.selectedTab?.engine?.isLoading != true) reloadOrStop()
     }
 
     override fun onFindResult(sessionId: String, activeIndex: Int, total: Int) {

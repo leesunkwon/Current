@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
@@ -130,6 +131,12 @@ internal fun BrowserMenu(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                             BrowserMenuSection(stringResource(R.string.current_page))
+                            if (ui.selectedTab?.engine?.canGoBack == true) {
+                                BrowserMenuItem(stringResource(R.string.back_history),
+                                    Icons.AutoMirrored.Filled.ArrowBack) {
+                                    perform(controller::showBackHistory)
+                                }
+                            }
                             BrowserMenuItem(if (bookmarked) stringResource(R.string.remove_bookmark)
                                 else stringResource(R.string.add_bookmark),
                                 Icons.Filled.BookmarkBorder) {
@@ -173,6 +180,9 @@ internal fun BrowserMenu(
                             }
                         }
                         BrowserMenuSection(stringResource(R.string.browser_section))
+                        BrowserMenuItem(stringResource(R.string.go_home), Icons.Filled.Home) {
+                            perform(controller::goHome)
+                        }
                         BrowserMenuItem(stringResource(R.string.privacy), Icons.Filled.Security) {
                             perform { controller.showPage(BrowserPage.PRIVACY) }
                         }

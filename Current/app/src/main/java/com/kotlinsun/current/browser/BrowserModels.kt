@@ -83,6 +83,7 @@ sealed interface BrowserDialog {
     data class RetryDangerousDownload(val id: Long, val fileName: String) : BrowserDialog
     data class DeleteLocalDownload(val id: Long, val fileName: String) : BrowserDialog
     data class HttpNavigation(val url: String) : BrowserDialog
+    data class BackHistory(val entries: List<com.kotlinsun.current.engine.NavigationEntry>) : BrowserDialog
     data object ClearSiteData : BrowserDialog
 }
 
@@ -96,12 +97,18 @@ data class BrowserUiState(
     val themeChoice: ThemeChoice = ThemeChoice.SYSTEM,
     val textZoom: Int = 100,
     val allowThirdPartyCookies: Boolean = false,
+    val homePageUrl: String? = null,
+    val trackingProtection: Boolean = false,
+    val trackingExceptions: Set<String> = emptySet(),
+    val privateLocked: Boolean = false,
+    val privateLockAvailable: Boolean = false,
     val defaultBrowser: Boolean? = null,
     val showOnboarding: Boolean = false,
     val privateAvailable: Boolean = false,
     val privateUnavailableReason: String? = null,
     val ready: Boolean = false,
     val startupError: String? = null,
+    val webViewUnavailable: Boolean = false,
     val pendingExternalUrl: String? = null,
     val dialog: BrowserDialog? = null,
     val linkTarget: LinkTarget? = null,

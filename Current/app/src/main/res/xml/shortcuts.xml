@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="new_tab" android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_new_tab">
+        <intent android:action="com.kotlinsun.current.action.NEW_TAB"
+            android:targetPackage="com.kotlinsun.current"
+            android:targetClass="com.kotlinsun.current.MainActivity" />
+    </shortcut>
+    <shortcut android:shortcutId="private_tab" android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_private_tab">
+        <intent android:action="com.kotlinsun.current.action.PRIVATE_TAB"
+            android:targetPackage="com.kotlinsun.current"
+            android:targetClass="com.kotlinsun.current.MainActivity" />
+    </shortcut>
+</shortcuts>
