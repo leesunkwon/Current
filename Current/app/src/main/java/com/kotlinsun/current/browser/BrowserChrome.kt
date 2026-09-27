@@ -296,6 +296,20 @@ private fun BrowserMenuItem(label: String, icon: ImageVector, onClick: () -> Uni
 
 @Composable
 internal fun BrowserBottomBar(ui: BrowserUiState, controller: BrowserController) {
+    BrowserBottomBar(ui, { controller.goBack() }, { controller.goForward() },
+        { controller.reloadOrStop() }, { controller.showPage(BrowserPage.TABS) },
+        { controller.newTab() })
+}
+
+@Composable
+internal fun BrowserBottomBar(
+    ui: BrowserUiState,
+    onBack: () -> Unit,
+    onForward: () -> Unit,
+    onReloadOrStop: () -> Unit,
+    onShowTabs: () -> Unit,
+    onNewTab: () -> Unit,
+) {
     val selected = ui.selectedTab
     val compact = LocalConfiguration.current.screenWidthDp < 320
     val horizontalPadding = if (compact) 8.dp else 16.dp
@@ -318,23 +332,23 @@ internal fun BrowserBottomBar(ui: BrowserUiState, controller: BrowserController)
                 .padding(if (compact) 6.dp else 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 6.dp),
                 verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = controller::goBack,
+                IconButton(onClick = onBack,
                     enabled = selected?.engine?.canGoBack == true, modifier = Modifier.size(48.dp)) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = stringResource(R.string.back))
                 }
-                IconButton(onClick = controller::goForward,
+                IconButton(onClick = onForward,
                     enabled = selected?.engine?.canGoForward == true, modifier = Modifier.size(48.dp)) {
                     Icon(Icons.AutoMirrored.Filled.ArrowForward,
                         contentDescription = stringResource(R.string.forward))
                 }
-                IconButton(onClick = controller::reloadOrStop,
+                IconButton(onClick = onReloadOrStop,
                     enabled = selected?.url != null, modifier = Modifier.size(48.dp)) {
                     Icon(if (selected?.engine?.isLoading == true) Icons.Filled.Stop else Icons.Filled.Refresh,
                         contentDescription = stringResource(if (selected?.engine?.isLoading == true)
                             R.string.stop_loading else R.string.reload))
                 }
-                IconButton(onClick = { controller.showPage(BrowserPage.TABS) },
+                IconButton(onClick = onShowTabs,
                     modifier = Modifier.size(48.dp).semantics { contentDescription = tabCountDescription }) {
                     Box(Modifier.size(27.dp).border(1.5.dp, Color.White,
                         MaterialTheme.shapes.extraSmall), contentAlignment = Alignment.Center) {
@@ -342,7 +356,7 @@ internal fun BrowserBottomBar(ui: BrowserUiState, controller: BrowserController)
                             color = Color.White, maxLines = 1)
                     }
                 }
-                IconButton(onClick = { controller.newTab() },
+                IconButton(onClick = onNewTab,
                     modifier = Modifier.size(48.dp).background(Color.White, CircleShape)) {
                     Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.new_tab),
                         tint = BrowserNavigation)

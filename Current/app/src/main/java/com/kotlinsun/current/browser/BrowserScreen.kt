@@ -385,7 +385,8 @@ fun BrowserScreen(controller: BrowserController) {
                 ui.page == BrowserPage.SITE_PERMISSIONS -> SitePermissionsScreen(ui, controller)
                 ui.page == BrowserPage.SETTINGS -> SettingsScreen(ui, controller)
                 selected?.url == null && controller.sessionForSelectedTab() == null -> NewTabPage(
-                    ui, controller, chromePadding = padding, addressField = {
+                    ui, onOpenQuickLink = controller::openSavedUrl,
+                    chromePadding = padding, addressField = {
                         BrowserAddressField(ui, address, editing, invalidAddress,
                             onAddressChange, onAddressFocus, submitAddress, useSuggestion,
                             dismissSuggestions,
@@ -453,9 +454,9 @@ private fun BrowserPage.label(): String = when (this) {
 }
 
 @Composable
-private fun NewTabPage(
+internal fun NewTabPage(
     ui: BrowserUiState,
-    controller: BrowserController,
+    onOpenQuickLink: (String) -> Unit,
     chromePadding: PaddingValues,
     addressField: @Composable () -> Unit,
 ) {
@@ -509,7 +510,7 @@ private fun NewTabPage(
             ui.quickLinks.take(8).chunked(if (singleQuickLinkColumn) 1 else 2).forEach { pair ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     pair.forEach { link ->
-                        Surface(onClick = { controller.openSavedUrl(link.url) },
+                        Surface(onClick = { onOpenQuickLink(link.url) },
                             modifier = Modifier.weight(1f).heightIn(min = 86.dp).semantics {
                                 contentDescription = context.getString(R.string.quick_link_open,
                                     context.getString(link.sourceRes), link.title, link.url)

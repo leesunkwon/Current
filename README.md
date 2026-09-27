@@ -48,6 +48,7 @@ Kotlin, Jetpack Compose, Android System WebView로 만드는 Android 웹 브라�
 ### 화면과 시스템
 
 - [x] 밝음·어두움·시스템 테마, 글꼴 배율, 첫 실행 소개 화면
+- [x] Compose 미리보기: 시작 화면과 새 탭의 밝음·어두움 상태, 시크릿 새 탭, 주소 입력
 - [x] 태블릿 탭 줄, 주요 버튼의 TalkBack 이름과 터치 영역
 - [x] `VIEW`·`SEND`·`PROCESS_TEXT`·`WEB_SEARCH` 인텐트 처리
 - [x] 런처의 새 탭·시크릿 탭 바로가기와 기본 브라우저 역할 요청
@@ -67,6 +68,10 @@ Kotlin, Jetpack Compose, Android System WebView로 만드는 Android 웹 브라�
 - [x] **읽기 화면:** 제목·문단·소제목을 구분하고 긴 본문을 지연 목록으로 표시합니다. 음성 언어 선택, 일시정지·재개 및 화면 이탈 시 정리를 연결했습니다.
 - [x] **기기 내 번역:** 사용자가 읽기 화면에서 번역을 시작하면 [Google Translate](https://translate.google.com)의 ML Kit 언어 모델을 Wi-Fi에서 다운로드하고 기기에서 본문을 번역합니다. 외부 번역 웹 서비스와 API 키는 사용하지 않으며 본문을 저장하지 않습니다. 번역 결과에는 Google 번역 출처와 면책 문구를 표시합니다.
 - [ ] 실제 기기의 런처·WebView별 호환성 확인
+
+## Compose 미리보기
+
+Android Studio에서 `Current/app/src/main/java/com/kotlinsun/current/browser/BrowserPreviews.kt`를 열고 **Split** 또는 **Design** 보기를 선택하면 미리보기를 볼 수 있습니다. 미리보기는 WebView와 저장소를 생성하지 않으므로 실제 웹페이지와 네트워크 탐색은 기기에서 확인해야 합니다.
 
 ## 제약과 작업 규칙
 
