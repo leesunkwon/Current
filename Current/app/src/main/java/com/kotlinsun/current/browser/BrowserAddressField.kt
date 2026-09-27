@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ErrorOutline
@@ -61,7 +60,7 @@ internal fun BrowserAddressField(
 ) {
     val isHome = ui.selectedTab?.url == null
     val inputDescription = stringResource(R.string.address_input_description)
-    val fieldShape = if (flat) RoundedCornerShape(8.dp) else RoundedCornerShape(10.dp)
+    val fieldShape = MaterialTheme.shapes.medium
     val addressInput: @Composable () -> Unit = {
         OutlinedTextField(
             value = value,
@@ -132,7 +131,7 @@ internal fun BrowserAddressField(
             modifier = Modifier.widthIn(max = 360.dp).heightIn(max =
                 if (LocalConfiguration.current.screenHeightDp < 480) 180.dp else 320.dp),
             properties = PopupProperties(focusable = false),
-            shape = MaterialTheme.shapes.medium,
+            shape = MaterialTheme.shapes.large,
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
             shadowElevation = 4.dp,

@@ -84,6 +84,13 @@ interface WebPermissionRequest {
     fun deny()
 }
 
+interface HttpAuthenticationRequest {
+    val host: String
+    val realm: String
+    fun proceed(username: String, password: String)
+    fun cancel()
+}
+
 interface FullScreenRequest {
     val view: View
     fun close()
@@ -103,6 +110,8 @@ interface EngineSession {
     fun stop()
     fun pause()
     fun resume()
+    fun pauseTimers()
+    fun resumeTimers()
     fun applySettings(allowThirdPartyCookies: Boolean, textZoom: Int)
     fun setDesktopMode(enabled: Boolean)
     fun find(text: String)
@@ -143,6 +152,7 @@ interface EngineCallbacks {
     fun onDownload(sessionId: String, request: DownloadRequest)
     fun onPermission(sessionId: String, request: WebPermissionRequest)
     fun onPermissionCanceled(sessionId: String, request: WebPermissionRequest)
+    fun onHttpAuthentication(sessionId: String, request: HttpAuthenticationRequest)
 }
 
 interface BrowserEngine {

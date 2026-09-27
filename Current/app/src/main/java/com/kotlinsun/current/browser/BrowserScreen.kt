@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -44,8 +45,10 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -80,6 +83,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -198,7 +202,7 @@ fun BrowserScreen(controller: BrowserController) {
     ui.dialog?.let { BrowserDialogView(it, controller) }
     ui.linkTarget?.let { target ->
         AlertDialog(onDismissRequest = controller::dismissLinkMenu,
-            shape = MaterialTheme.shapes.large,
+            shape = MaterialTheme.shapes.extraLarge,
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
             title = { Text(stringResource(if (target.imageUrl != null)
@@ -206,38 +210,38 @@ fun BrowserScreen(controller: BrowserController) {
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     Text(target.url, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    TextButton(onClick = { controller.openLink(true) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                    BrowserTextButton(onClick = { controller.openLink(true) }, modifier = Modifier.heightIn(min = 48.dp)) {
                         Text(stringResource(R.string.open_new_tab))
                     }
-                    TextButton(onClick = { controller.openLink(false) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                    BrowserTextButton(onClick = { controller.openLink(false) }, modifier = Modifier.heightIn(min = 48.dp)) {
                         Text(stringResource(R.string.open_background_tab))
                     }
                     if (ui.activeMode == TabMode.NORMAL && ui.privateAvailable) {
-                        TextButton(onClick = { controller.openLink(true, true) },
+                        BrowserTextButton(onClick = { controller.openLink(true, true) },
                             modifier = Modifier.heightIn(min = 48.dp)) {
                             Text(stringResource(R.string.open_private_tab))
                         }
                     }
-                    TextButton(onClick = controller::copyLink, modifier = Modifier.heightIn(min = 48.dp)) {
+                    BrowserTextButton(onClick = controller::copyLink, modifier = Modifier.heightIn(min = 48.dp)) {
                         Text(stringResource(R.string.copy_link))
                     }
-                    TextButton(onClick = controller::shareLink, modifier = Modifier.heightIn(min = 48.dp)) {
+                    BrowserTextButton(onClick = controller::shareLink, modifier = Modifier.heightIn(min = 48.dp)) {
                         Text(stringResource(R.string.share_link))
                     }
-                    if (target.imageUrl != null) TextButton(onClick = controller::saveImage,
+                    if (target.imageUrl != null) BrowserTextButton(onClick = controller::saveImage,
                         modifier = Modifier.heightIn(min = 48.dp)) {
                         Text(stringResource(R.string.save_image))
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = controller::dismissLinkMenu,
+            confirmButton = { BrowserTextButton(onClick = controller::dismissLinkMenu,
                 modifier = Modifier.heightIn(min = 48.dp)) {
                 Text(stringResource(R.string.close))
             } })
     }
     ui.pendingExternalUrl?.let { url ->
         AlertDialog(onDismissRequest = controller::dismissExternal,
-            shape = MaterialTheme.shapes.large,
+            shape = MaterialTheme.shapes.extraLarge,
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
             title = { Text(stringResource(R.string.open_external_app)) },
@@ -245,7 +249,7 @@ fun BrowserScreen(controller: BrowserController) {
             confirmButton = { Button(onClick = controller::confirmExternal,
                 shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.open)) } },
-            dismissButton = { TextButton(onClick = controller::dismissExternal,
+            dismissButton = { BrowserTextButton(onClick = controller::dismissExternal,
                 modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.cancel)) } })
     }
 
@@ -270,7 +274,7 @@ fun BrowserScreen(controller: BrowserController) {
                                 if (ui.activeMode == TabMode.PRIVATE) {
                                     Icon(Icons.Filled.Lock, contentDescription = null,
                                         modifier = Modifier.size(28.dp))
-                                } else CurrentBrandIcon(Modifier.size(28.dp), MaterialTheme.shapes.medium)
+                                } else CurrentBrandIcon(Modifier.size(28.dp), MaterialTheme.shapes.extraSmall)
                                 Text(stringResource(if (ui.activeMode == TabMode.PRIVATE)
                                     R.string.private_tab else R.string.app_name),
                                     modifier = Modifier.weight(1f).padding(start = 10.dp),
@@ -339,7 +343,8 @@ fun BrowserScreen(controller: BrowserController) {
                 !ui.ready -> Column(Modifier.align(Alignment.Center).padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(ui.startupError ?: stringResource(R.string.startup_loading))
-                    if (ui.startupError != null) Button(onClick = controller::retryStart) {
+                    if (ui.startupError != null) Button(onClick = controller::retryStart,
+                        shape = MaterialTheme.shapes.medium) {
                         Text(stringResource(R.string.startup_retry))
                     }
                 }
@@ -348,7 +353,8 @@ fun BrowserScreen(controller: BrowserController) {
                 ui.page == BrowserPage.BOOKMARKS -> BookmarkScreen(ui, controller)
                 ui.page == BrowserPage.DOWNLOADS -> DownloadScreen(ui, controller)
                 ui.page == BrowserPage.PRIVACY -> PrivacyScreen(controller)
-                ui.page == BrowserPage.SITE_INFO -> SiteInfoScreen(ui)
+                ui.page == BrowserPage.SITE_INFO -> SiteInfoScreen(ui, controller)
+                ui.page == BrowserPage.SITE_PERMISSIONS -> SitePermissionsScreen(ui, controller)
                 ui.page == BrowserPage.SETTINGS -> SettingsScreen(ui, controller)
                 selected?.url == null && controller.sessionForSelectedTab() == null -> NewTabPage(
                     ui, controller, chromePadding = padding, addressField = {
@@ -408,6 +414,7 @@ private fun BrowserPage.label(): String = when (this) {
     BrowserPage.DOWNLOADS -> stringResource(R.string.downloads)
     BrowserPage.PRIVACY -> stringResource(R.string.privacy)
     BrowserPage.SITE_INFO -> stringResource(R.string.site_info)
+    BrowserPage.SITE_PERMISSIONS -> stringResource(R.string.site_permissions)
     BrowserPage.SETTINGS -> stringResource(R.string.settings)
 }
 
@@ -458,7 +465,7 @@ private fun NewTabPage(
                 .semantics { heading() },
                 style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(14.dp))
-            ui.quickLinks.take(4).chunked(if (singleQuickLinkColumn) 1 else 2).forEach { pair ->
+            ui.quickLinks.take(8).chunked(if (singleQuickLinkColumn) 1 else 2).forEach { pair ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     pair.forEach { link ->
                         Surface(onClick = { controller.openSavedUrl(link.url) },
@@ -470,7 +477,7 @@ private fun NewTabPage(
                             color = MaterialTheme.colorScheme.surface,
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                             Column(Modifier.padding(14.dp)) {
-                                Surface(shape = MaterialTheme.shapes.medium,
+                                Surface(shape = MaterialTheme.shapes.small,
                                     color = MaterialTheme.colorScheme.secondaryContainer) {
                                     Text(stringResource(link.sourceRes),
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
@@ -503,6 +510,17 @@ private fun BrowserPanel(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
         Column(Modifier.padding(20.dp), content = content)
     }
+}
+
+@Composable
+private fun BrowserTextButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable RowScope.() -> Unit,
+) {
+    TextButton(onClick = onClick, modifier = modifier, enabled = enabled,
+        shape = MaterialTheme.shapes.medium, content = content)
 }
 
 @Composable
@@ -613,6 +631,13 @@ private fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
                 Text(stringResource(R.string.privacy_clear), modifier = Modifier.weight(1f))
                 Text("›", color = MaterialTheme.colorScheme.primary)
             }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            Row(Modifier.fillMaxWidth().heightIn(min = 52.dp)
+                .clickable { controller.showPage(BrowserPage.SITE_PERMISSIONS) },
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.site_permissions), modifier = Modifier.weight(1f))
+                Text("›", color = MaterialTheme.colorScheme.primary)
+            }
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -622,9 +647,15 @@ private fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
 private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
+    var groupFilter by remember(ui.activeMode) { mutableStateOf<String?>(null) }
+    var groupingTab by remember { mutableStateOf<BrowserTab?>(null) }
+    var renamingGroup by remember { mutableStateOf<String?>(null) }
+    var groupInput by remember { mutableStateOf("") }
     val ordered = ui.visibleTabs
-    val filtered = ordered.filter { query.isBlank() ||
-        it.title.contains(query, true) || it.url?.contains(query, true) == true }
+    val groups = ordered.mapNotNull { it.groupName }.distinct()
+    val activeGroupFilter = groupFilter?.takeIf { it in groups }
+    val filtered = ordered.filter { (activeGroupFilter == null || it.groupName == activeGroupFilter) &&
+        (query.isBlank() || it.title.contains(query, true) || it.url?.contains(query, true) == true) }
     val duplicateCount = ordered.mapNotNull { it.url?.takeIf { url ->
         url.startsWith("http://", true) || url.startsWith("https://", true) } }
         .groupingBy { it }.eachCount().values.sumOf { (it - 1).coerceAtLeast(0) }
@@ -633,6 +664,65 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
     val previewHeight = if (compact) 64.dp else 78.dp
     val closeAllDescription = stringResource(if (ui.activeMode == TabMode.PRIVATE)
         R.string.close_all_private_tabs else R.string.close_all_normal_tabs)
+    groupingTab?.let { tab ->
+        AlertDialog(onDismissRequest = { groupingTab = null },
+            title = { Text(stringResource(R.string.tab_group_title)) },
+            text = { Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(groupInput, { groupInput = it }, singleLine = true,
+                    label = { Text(stringResource(R.string.tab_group_name)) },
+                    modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
+                groups.forEach { name ->
+                    ChoicePill(name, groupInput == name, { groupInput = name },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp))
+                }
+                if (tab.groupName != null) BrowserTextButton(onClick = {
+                    controller.setTabGroup(tab.id, "")
+                    groupingTab = null
+                }, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.tab_group_remove))
+                }
+            } },
+            confirmButton = { Button(onClick = {
+                controller.setTabGroup(tab.id, groupInput)
+                groupingTab = null
+            }, enabled = groupInput.isNotBlank(), shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.save))
+            } },
+            dismissButton = { BrowserTextButton(onClick = { groupingTab = null },
+                modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.cancel))
+            } })
+    }
+    renamingGroup?.let { old ->
+        AlertDialog(onDismissRequest = { renamingGroup = null },
+            title = { Text(stringResource(R.string.tab_group_rename)) },
+            text = { Column {
+                OutlinedTextField(groupInput, { groupInput = it }, singleLine = true,
+                    label = { Text(stringResource(R.string.tab_group_name)) },
+                    modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
+                BrowserTextButton(onClick = {
+                    controller.ungroupTabs(old)
+                    groupFilter = null
+                    renamingGroup = null
+                }, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.tab_group_remove_all))
+                }
+            } },
+            confirmButton = { Button(onClick = {
+                controller.renameTabGroup(old, groupInput)
+                groupFilter = groupInput.trim().take(32)
+                renamingGroup = null
+            }, enabled = groupInput.isNotBlank(), shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.save))
+            } },
+            dismissButton = { BrowserTextButton(onClick = { renamingGroup = null },
+                modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.cancel))
+            } })
+    }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -656,14 +746,30 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
             singleLine = true, shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
                 .semantics { contentDescription = context.getString(R.string.tab_search) })
+        if (groups.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ChoicePill(stringResource(R.string.all), activeGroupFilter == null,
+                { groupFilter = null }, modifier = Modifier.heightIn(min = 48.dp))
+            groups.forEach { name ->
+                ChoicePill(name, activeGroupFilter == name, { groupFilter = name },
+                    modifier = Modifier.heightIn(min = 48.dp))
+            }
+            if (activeGroupFilter != null) BrowserTextButton(onClick = {
+                renamingGroup = activeGroupFilter
+                groupInput = activeGroupFilter
+            }, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.edit))
+            }
+        }
         val tabActions: @Composable (Modifier, Modifier) -> Unit = { closeModifier, newModifier ->
-            TextButton(onClick = controller::closeAllTabs,
+            BrowserTextButton(onClick = controller::closeAllTabs,
                 modifier = closeModifier.heightIn(min = 48.dp).semantics {
                     contentDescription = closeAllDescription
                 }) {
                 Text(stringResource(R.string.close_all_tabs))
             }
-            TextButton(onClick = { controller.newTab(mode = ui.activeMode) },
+            BrowserTextButton(onClick = { controller.newTab(mode = ui.activeMode) },
                 modifier = newModifier.heightIn(min = 48.dp)) {
                 Icon(Icons.Filled.Add, contentDescription = null)
                 Text(stringResource(R.string.new_tab))
@@ -680,7 +786,7 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                 tabActions(Modifier, Modifier)
             }
         }
-        if (duplicateCount > 0) TextButton(onClick = controller::closeDuplicateTabs,
+        if (duplicateCount > 0) BrowserTextButton(onClick = controller::closeDuplicateTabs,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
             Text(stringResource(R.string.tab_close_duplicates, duplicateCount))
         }
@@ -724,6 +830,8 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                                 Text(tab.title, style = MaterialTheme.typography.bodyLarge,
                                     maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                tab.groupName?.let { Text(it, style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary, maxLines = 1) }
                                 Spacer(Modifier.height(4.dp))
                                 Text(tabUrl, style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -742,17 +850,23 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                         ordered[index + 1].pinned == tab.pinned
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        TextButton(onClick = { controller.toggleTabPinned(tab.id) },
+                        BrowserTextButton(onClick = {
+                            groupingTab = tab
+                            groupInput = tab.groupName.orEmpty()
+                        }, modifier = Modifier.heightIn(min = 48.dp)) {
+                            Text(stringResource(R.string.tab_group_short))
+                        }
+                        BrowserTextButton(onClick = { controller.toggleTabPinned(tab.id) },
                             modifier = Modifier.heightIn(min = 48.dp).semantics {
                                 contentDescription = context.getString(if (tab.pinned)
                                     R.string.tab_unpin else R.string.tab_pin, tab.title)
                             }) { Text(stringResource(if (tab.pinned)
                                 R.string.tab_unpin_short else R.string.tab_pin_short), maxLines = 1) }
-                        TextButton(onClick = { controller.moveTab(tab.id, -1) }, enabled = canUp,
+                        BrowserTextButton(onClick = { controller.moveTab(tab.id, -1) }, enabled = canUp,
                             modifier = Modifier.heightIn(min = 48.dp).semantics {
                                 contentDescription = context.getString(R.string.tab_move_up, tab.title)
                             }) { Text(stringResource(R.string.tab_move_up_short)) }
-                        TextButton(onClick = { controller.moveTab(tab.id, 1) }, enabled = canDown,
+                        BrowserTextButton(onClick = { controller.moveTab(tab.id, 1) }, enabled = canDown,
                             modifier = Modifier.heightIn(min = 48.dp).semantics {
                                 contentDescription = context.getString(R.string.tab_move_down, tab.title)
                             }) { Text(stringResource(R.string.tab_move_down_short)) }
@@ -832,7 +946,7 @@ private fun HistoryScreen(ui: BrowserUiState, controller: BrowserController) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically) {
                             if (favicon != null) Image(favicon, contentDescription = null,
-                                modifier = Modifier.size(28.dp).clip(MaterialTheme.shapes.small))
+                                modifier = Modifier.size(28.dp).clip(MaterialTheme.shapes.extraSmall))
                             else Icon(Icons.Filled.Language, contentDescription = null,
                                 modifier = Modifier.size(28.dp), tint = MaterialTheme.colorScheme.primary)
                             Column(Modifier.weight(1f).heightIn(min = 56.dp)
@@ -864,73 +978,171 @@ private fun HistoryScreen(ui: BrowserUiState, controller: BrowserController) {
 @Composable
 private fun BookmarkScreen(ui: BrowserUiState, controller: BrowserController) {
     val context = LocalContext.current
+    var currentFolderId by remember { mutableStateOf<String?>(null) }
+    var folderDialogId by remember { mutableStateOf<String?>(null) }
+    var folderDialogOpen by remember { mutableStateOf(false) }
+    var folderName by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<BookmarkRecord?>(null) }
     var title by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
+    var editFolderId by remember { mutableStateOf<String?>(null) }
+    val currentFolder = ui.bookmarkFolders.firstOrNull { it.id == currentFolderId }
+    LaunchedEffect(currentFolderId, ui.bookmarkFolders) {
+        if (currentFolderId != null && currentFolder == null) currentFolderId = null
+    }
+    val visibleFolders = ui.bookmarkFolders.filter { it.parentId == currentFolderId }
+    val visibleBookmarks = ui.bookmarks.filter { it.folderId == currentFolderId }
+    fun folderPath(id: String): String {
+        val names = mutableListOf<String>()
+        val seen = mutableSetOf<String>()
+        var cursor: String? = id
+        while (cursor != null && seen.add(cursor) && names.size < 16) {
+            val folder = ui.bookmarkFolders.firstOrNull { it.id == cursor } ?: break
+            names.add(folder.name)
+            cursor = folder.parentId
+        }
+        return names.asReversed().joinToString(" / ")
+    }
+    if (folderDialogOpen) AlertDialog(onDismissRequest = { folderDialogOpen = false },
+        title = { Text(stringResource(if (folderDialogId == null)
+            R.string.bookmark_folder_new else R.string.bookmark_folder_rename)) },
+        text = { OutlinedTextField(folderName, { folderName = it }, singleLine = true,
+            label = { Text(stringResource(R.string.bookmark_folder_name)) },
+            modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium) },
+        confirmButton = { Button(onClick = {
+            val id = folderDialogId
+            if (id == null) controller.createBookmarkFolder(folderName, currentFolderId)
+            else controller.renameBookmarkFolder(id, folderName)
+            folderDialogOpen = false
+        }, enabled = folderName.isNotBlank(), shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.heightIn(min = 48.dp)) {
+            Text(stringResource(R.string.save))
+        } },
+        dismissButton = { BrowserTextButton(onClick = { folderDialogOpen = false },
+            modifier = Modifier.heightIn(min = 48.dp)) {
+            Text(stringResource(R.string.cancel))
+        } })
     ui.bookmarkImportPreview?.let { preview ->
         AlertDialog(onDismissRequest = controller::cancelBookmarkImport,
-            shape = MaterialTheme.shapes.large,
+            shape = MaterialTheme.shapes.extraLarge,
             containerColor = MaterialTheme.colorScheme.surface,
             title = { Text(stringResource(R.string.bookmark_import_preview)) },
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.bookmark_import_counts, preview.total,
                     preview.newCount, preview.duplicateCount))
+                if (preview.folderCount > 0)
+                    Text(stringResource(R.string.bookmark_import_folder_count, preview.folderCount))
                 preview.sample.forEach { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             } },
             confirmButton = { Button(onClick = controller::confirmBookmarkImport,
-                enabled = preview.newCount > 0,
+                enabled = preview.newCount > 0 || preview.folderCount > 0,
                 shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.heightIn(min = 48.dp)) {
                 Text(stringResource(R.string.bookmark_import))
             } },
-            dismissButton = { TextButton(onClick = controller::cancelBookmarkImport,
+            dismissButton = { BrowserTextButton(onClick = controller::cancelBookmarkImport,
                 modifier = Modifier.heightIn(min = 48.dp)) {
                 Text(stringResource(R.string.cancel))
             } })
     }
     editing?.let { item ->
         AlertDialog(onDismissRequest = { editing = null },
-            shape = MaterialTheme.shapes.large,
+            shape = MaterialTheme.shapes.extraLarge,
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
             title = { Text(stringResource(R.string.edit_bookmark)) },
-            text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            text = { Column(Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(title, { title = it },
                     label = { Text(stringResource(R.string.title)) },
-                    modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large)
+                    modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
                 OutlinedTextField(url, { url = it },
                     label = { Text(stringResource(R.string.address)) },
-                    modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large)
+                    modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
+                Text(stringResource(R.string.bookmark_folder_name))
+                ChoicePill(stringResource(R.string.bookmark_root_folder), editFolderId == null,
+                    { editFolderId = null }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp))
+                ui.bookmarkFolders.forEach { folder ->
+                    ChoicePill(folderPath(folder.id), editFolderId == folder.id,
+                        { editFolderId = folder.id },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp))
+                }
             } },
             confirmButton = { Button(onClick = {
-                controller.updateBookmark(item.id, title, url)
+                controller.updateBookmark(item.id, title, url, editFolderId)
                 editing = null
             }, shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.save)) } },
-            dismissButton = { TextButton(onClick = { editing = null },
+            dismissButton = { BrowserTextButton(onClick = { editing = null },
                 modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.cancel)) } })
     }
     Column(Modifier.fillMaxSize()) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        TextButton(onClick = controller::beginBookmarkImport,
+        BrowserTextButton(onClick = controller::beginBookmarkImport,
             modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
             Text(stringResource(R.string.bookmark_import))
         }
-        TextButton(onClick = controller::beginBookmarkExport,
+        BrowserTextButton(onClick = controller::beginBookmarkExport,
             modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
             Text(stringResource(R.string.bookmark_export))
         }
     }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        if (currentFolder != null) BrowserTextButton(onClick = {
+            currentFolderId = currentFolder.parentId
+        }, modifier = Modifier.heightIn(min = 48.dp)) {
+            Text(stringResource(R.string.bookmark_folder_back))
+        }
+        Text(currentFolder?.name ?: stringResource(R.string.bookmark_root_folder),
+            modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+        BrowserTextButton(onClick = {
+            folderDialogId = null
+            folderName = ""
+            folderDialogOpen = true
+        }, modifier = Modifier.heightIn(min = 48.dp)) {
+            Text(stringResource(R.string.bookmark_folder_new))
+        }
+    }
+    if (currentFolder != null) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.End) {
+        BrowserTextButton(onClick = {
+            folderDialogId = currentFolder.id
+            folderName = currentFolder.name
+            folderDialogOpen = true
+        }, modifier = Modifier.heightIn(min = 48.dp)) {
+            Text(stringResource(R.string.edit))
+        }
+        BrowserTextButton(onClick = {
+            controller.deleteBookmarkFolder(currentFolder.id)
+            currentFolderId = currentFolder.parentId
+        }, modifier = Modifier.heightIn(min = 48.dp)) {
+            Text(stringResource(R.string.bookmark_folder_delete))
+        }
+    }
     LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (ui.bookmarks.isEmpty()) item {
+        if (visibleBookmarks.isEmpty() && visibleFolders.isEmpty()) item {
             BrowserPanel(Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.bookmarks_empty),
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        items(ui.bookmarks, key = { it.id }) { bookmark ->
+        items(visibleFolders, key = { "folder-" + it.id }) { folder ->
+            Surface(onClick = { currentFolderId = folder.id },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Folder, contentDescription = null)
+                    Text(folder.name, modifier = Modifier.padding(start = 12.dp),
+                        style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+        items(visibleBookmarks, key = { it.id }) { bookmark ->
             Surface(shape = MaterialTheme.shapes.large,
                 color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
@@ -950,15 +1162,22 @@ private fun BookmarkScreen(ui: BrowserUiState, controller: BrowserController) {
                                 style = MaterialTheme.typography.bodySmall)
                         }
                     }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = {
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.End) {
+                        BrowserTextButton(onClick = {
                             editing = bookmark
                             title = bookmark.title
                             url = bookmark.url
+                            editFolderId = bookmark.folderId
                         }, modifier = Modifier.heightIn(min = 48.dp).semantics {
                             contentDescription = context.getString(R.string.bookmark_edit,
                                 bookmark.title)
                         }) { Text(stringResource(R.string.edit)) }
+                        BrowserTextButton(onClick = { controller.toggleBookmarkHomePin(bookmark.id) },
+                            modifier = Modifier.heightIn(min = 48.dp)) {
+                            Text(stringResource(if (bookmark.pinnedToHome)
+                                R.string.bookmark_home_unpin else R.string.bookmark_home_pin))
+                        }
                         IconButton(onClick = { controller.deleteBookmark(bookmark.id) },
                             modifier = Modifier.size(48.dp)) {
                             Icon(Icons.Filled.Close,
@@ -1027,12 +1246,16 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
                 { filter = choice }, modifier = Modifier.heightIn(min = 48.dp))
         }
     }
+    BrowserTextButton(onClick = controller::openDownloadsFolder,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+        Text(stringResource(R.string.downloads_open_folder))
+    }
     LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         ui.downloadError?.let { error -> item {
             BrowserPanel(Modifier.fillMaxWidth()) {
                 Text(error, color = currentErrorTextColor())
-                TextButton(onClick = controller::refreshDownloads,
+                BrowserTextButton(onClick = controller::refreshDownloads,
                     modifier = Modifier.heightIn(min = 48.dp)) {
                     Text(stringResource(R.string.download_retry))
                 }
@@ -1040,7 +1263,7 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
         } }
         if (ui.downloads.any { it.status == DOWNLOAD_STATUS_MISSING } ||
             ui.missingLocalDownloadIds.isNotEmpty()) item {
-            TextButton(onClick = controller::clearMissingDownloadRecords,
+            BrowserTextButton(onClick = controller::clearMissingDownloadRecords,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                 Text(stringResource(R.string.download_missing_cleanup))
             }
@@ -1101,7 +1324,7 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
                 }
                 DownloadActionContainer(compactActions) {
                     if (item.status == DownloadManager.STATUS_FAILED || item.status == DOWNLOAD_STATUS_MISSING) {
-                        TextButton(onClick = { controller.retryDownload(item) },
+                        BrowserTextButton(onClick = { controller.retryDownload(item) },
                             enabled = item.record.id !in ui.retryingDownloadIds,
                             modifier = actionModifier.heightIn(min = 48.dp).semantics {
                                 contentDescription = context.getString(R.string.download_retry_item,
@@ -1109,17 +1332,17 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
                             }) { Text(stringResource(R.string.download_retry)) }
                     }
                     if (item.status == DownloadManager.STATUS_SUCCESSFUL) {
-                        TextButton(onClick = { controller.openDownload(item.record.id) },
+                        BrowserTextButton(onClick = { controller.openDownload(item.record.id) },
                             modifier = actionModifier.heightIn(min = 48.dp).semantics {
                                 contentDescription = context.getString(R.string.file_open,
                                     item.record.fileName)
                             }) { Text(stringResource(R.string.open)) }
-                        TextButton(onClick = { controller.shareDownload(item) },
+                        BrowserTextButton(onClick = { controller.shareDownload(item) },
                             modifier = actionModifier.heightIn(min = 48.dp).semantics {
                                 contentDescription = context.getString(R.string.file_share, item.record.fileName)
                             }) { Text(stringResource(R.string.share)) }
                     }
-                    TextButton(onClick = { controller.requestDeleteDownload(item) },
+                    BrowserTextButton(onClick = { controller.requestDeleteDownload(item) },
                         modifier = actionModifier.heightIn(min = 48.dp).semantics {
                             contentDescription = context.getString(
                                 if (item.status == DownloadManager.STATUS_PENDING ||
@@ -1151,15 +1374,15 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 DownloadActionContainer(compactActions) {
-                    if (!missing && !inaccessible) TextButton(onClick = { controller.openLocalDownload(item) },
+                    if (!missing && !inaccessible) BrowserTextButton(onClick = { controller.openLocalDownload(item) },
                         modifier = actionModifier.heightIn(min = 48.dp).semantics {
                             contentDescription = context.getString(R.string.file_open, item.fileName)
                         }) { Text(stringResource(R.string.open)) }
-                    if (!missing && !inaccessible) TextButton(onClick = { controller.shareLocalDownload(item) },
+                    if (!missing && !inaccessible) BrowserTextButton(onClick = { controller.shareLocalDownload(item) },
                         modifier = actionModifier.heightIn(min = 48.dp).semantics {
                             contentDescription = context.getString(R.string.file_share, item.fileName)
                         }) { Text(stringResource(R.string.share)) }
-                    TextButton(onClick = { controller.requestDeleteLocalDownload(item) },
+                    BrowserTextButton(onClick = { controller.requestDeleteLocalDownload(item) },
                         modifier = actionModifier.heightIn(min = 48.dp).semantics {
                             contentDescription = context.getString(R.string.file_delete, item.fileName)
                         }) { Text(stringResource(R.string.delete)) }
@@ -1269,7 +1492,7 @@ private fun PrivacyScreen(controller: BrowserController) {
 }
 
 @Composable
-private fun SiteInfoScreen(ui: BrowserUiState) {
+private fun SiteInfoScreen(ui: BrowserUiState, controller: BrowserController) {
     val info = ui.siteInfo
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
         .padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -1314,15 +1537,65 @@ private fun SiteInfoScreen(ui: BrowserUiState) {
             Text(stringResource(R.string.site_permissions_notice),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val origin = info?.url?.let(SitePermissionCoordinator::canonicalOrigin)
+            ui.savedSitePermissions.filter { ui.activeMode == TabMode.NORMAL && it.origin == origin }
+                .forEach { record ->
+                Spacer(Modifier.height(8.dp))
+                Text(record.origin + " · " + permissionKindLabel(record.kind) + " · " +
+                    stringResource(if (record.allowed) R.string.permission_saved_allow
+                        else R.string.permission_saved_deny))
+            }
+            BrowserTextButton(onClick = { controller.showPage(BrowserPage.SITE_PERMISSIONS) },
+                modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.site_permissions_manage))
+            }
         }
     }
 }
+
+@Composable
+private fun SitePermissionsScreen(ui: BrowserUiState, controller: BrowserController) {
+    val context = LocalContext.current
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (ui.savedSitePermissions.isEmpty()) item {
+            BrowserPanel(Modifier.fillMaxWidth()) { Text(stringResource(R.string.site_permissions_empty)) }
+        }
+        items(ui.savedSitePermissions, key = { it.origin + "|" + it.kind }) { record ->
+            val kindLabel = permissionKindLabel(record.kind)
+            BrowserPanel(Modifier.fillMaxWidth()) {
+                Text(record.origin, style = MaterialTheme.typography.titleSmall)
+                Text(kindLabel + " · " + stringResource(if (record.allowed)
+                    R.string.permission_saved_allow else R.string.permission_saved_deny),
+                    style = MaterialTheme.typography.bodySmall)
+                BrowserTextButton(onClick = { controller.deleteSitePermission(record) },
+                    modifier = Modifier.heightIn(min = 48.dp).semantics {
+                        contentDescription = context.getString(R.string.site_permission_delete_label,
+                            record.origin, kindLabel)
+                    }) {
+                    Text(stringResource(R.string.permission_forget))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun permissionKindLabel(kind: String): String = stringResource(when (kind) {
+    "CAMERA" -> R.string.permission_camera
+    "MICROPHONE" -> R.string.permission_microphone
+    "LOCATION" -> R.string.permission_location
+    "PROTECTED_MEDIA" -> R.string.permission_protected_media
+    else -> R.string.site_permissions
+})
 
 @Composable
 private fun BrowserDialogView(dialog: BrowserDialog, controller: BrowserController) {
     var prompt by remember(dialog) {
         mutableStateOf((dialog as? BrowserDialog.JavaScript)?.defaultValue.orEmpty())
     }
+    var password by remember(dialog) { mutableStateOf("") }
+    var dangerousAccepted by remember(dialog) { mutableStateOf(false) }
     val permissionNames = mapOf(
         com.kotlinsun.current.engine.WebPermissionKind.CAMERA to stringResource(R.string.permission_camera),
         com.kotlinsun.current.engine.WebPermissionKind.MICROPHONE to stringResource(R.string.permission_microphone),
@@ -1334,14 +1607,16 @@ private fun BrowserDialogView(dialog: BrowserDialog, controller: BrowserControll
         is BrowserDialog.Notice -> stringResource(R.string.dialog_notice)
         is BrowserDialog.JavaScript -> dialog.origin
         is BrowserDialog.Permission -> stringResource(R.string.dialog_permission)
+        is BrowserDialog.HttpAuthentication -> stringResource(R.string.http_auth_title)
         is BrowserDialog.Download -> stringResource(R.string.dialog_download)
         is BrowserDialog.DeleteDownload, is BrowserDialog.DeleteLocalDownload ->
             stringResource(R.string.dialog_download_delete)
+        is BrowserDialog.RetryDangerousDownload -> stringResource(R.string.download_dangerous_retry_title)
         is BrowserDialog.HttpNavigation -> stringResource(R.string.dialog_http)
         BrowserDialog.ClearSiteData -> stringResource(R.string.dialog_site_data)
     }
     AlertDialog(onDismissRequest = controller::cancelDialog,
-        shape = MaterialTheme.shapes.large,
+        shape = MaterialTheme.shapes.extraLarge,
         containerColor = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp,
         title = { Text(title) },
@@ -1353,15 +1628,53 @@ private fun BrowserDialogView(dialog: BrowserDialog, controller: BrowserControll
                     if (dialog.kind == JavaScriptDialogKind.PROMPT) OutlinedTextField(
                         prompt, { prompt = it },
                         label = { Text(stringResource(R.string.dialog_response)) },
-                        modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large)
+                        modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
                 }
-                is BrowserDialog.Permission -> Text(stringResource(R.string.permission_request,
-                    dialog.origin, dialog.kinds.joinToString { permissionNames[it].orEmpty() }))
-                is BrowserDialog.Download -> Text(dialog.fileName + "\n" + dialog.url +
-                    "\n" + stringResource(R.string.download_location_notice) +
-                    if (dialog.privateMode) "\n" + stringResource(R.string.private_download_notice) else "")
+                is BrowserDialog.Permission -> Column {
+                    Text(stringResource(R.string.permission_request,
+                        dialog.origin, dialog.kinds.joinToString { permissionNames[it].orEmpty() }))
+                    if (dialog.canRemember) {
+                        Spacer(Modifier.height(12.dp))
+                        BrowserTextButton(onClick = { controller.approveSitePermission(true) },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                            Text(stringResource(R.string.permission_always_allow))
+                        }
+                        BrowserTextButton(onClick = { controller.denySitePermission(true) },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                            Text(stringResource(R.string.permission_always_deny))
+                        }
+                    }
+                }
+                is BrowserDialog.HttpAuthentication -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(stringResource(R.string.http_auth_request, dialog.host, dialog.realm))
+                    OutlinedTextField(prompt, { prompt = it }, singleLine = true,
+                        label = { Text(stringResource(R.string.http_auth_username)) },
+                        modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
+                    OutlinedTextField(password, { password = it }, singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        label = { Text(stringResource(R.string.http_auth_password)) },
+                        modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
+                }
+                is BrowserDialog.Download -> Column {
+                    Text(dialog.fileName + "\n" + dialog.url +
+                        "\n" + stringResource(R.string.download_location_notice) +
+                        if (dialog.privateMode) "\n" + stringResource(R.string.private_download_notice) else "")
+                    if (dialog.dangerous) Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = dangerousAccepted, onCheckedChange = { dangerousAccepted = it })
+                        Text(stringResource(R.string.download_dangerous_warning),
+                            color = currentErrorTextColor())
+                    }
+                }
                 is BrowserDialog.DeleteDownload -> Text(stringResource(R.string.delete_download_notice,
                     dialog.fileName))
+                is BrowserDialog.RetryDangerousDownload -> Column {
+                    Text(dialog.fileName)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = dangerousAccepted, onCheckedChange = { dangerousAccepted = it })
+                        Text(stringResource(R.string.download_dangerous_warning),
+                            color = currentErrorTextColor())
+                    }
+                }
                 is BrowserDialog.DeleteLocalDownload -> Text(stringResource(
                     R.string.delete_local_download_notice, dialog.fileName))
                 is BrowserDialog.HttpNavigation -> Text(stringResource(R.string.http_navigation_notice,
@@ -1370,15 +1683,26 @@ private fun BrowserDialogView(dialog: BrowserDialog, controller: BrowserControll
             }
         },
         confirmButton = { Button(onClick = {
-            controller.confirmDialog(if (dialog is BrowserDialog.JavaScript &&
-                dialog.kind == JavaScriptDialogKind.PROMPT) prompt else null)
-        }, shape = MaterialTheme.shapes.medium,
+            if (dialog is BrowserDialog.Permission) controller.approveSitePermission(false)
+            else controller.confirmDialog(if ((dialog is BrowserDialog.JavaScript &&
+                dialog.kind == JavaScriptDialogKind.PROMPT) || dialog is BrowserDialog.HttpAuthentication)
+                prompt else null, if (dialog is BrowserDialog.HttpAuthentication) password else null,
+                dangerousAccepted)
+        }, enabled = when (dialog) {
+            is BrowserDialog.Download -> !dialog.dangerous || dangerousAccepted
+            is BrowserDialog.RetryDangerousDownload -> dangerousAccepted
+            is BrowserDialog.HttpAuthentication -> prompt.isNotBlank()
+            else -> true
+        },
+            shape = MaterialTheme.shapes.medium,
             modifier = Modifier.heightIn(min = 48.dp)) { Text(when (dialog) {
             is BrowserDialog.Notice -> stringResource(R.string.dialog_confirm)
-            is BrowserDialog.Permission -> stringResource(R.string.dialog_allow)
+            is BrowserDialog.Permission -> stringResource(R.string.permission_allow_once)
+            is BrowserDialog.HttpAuthentication -> stringResource(R.string.http_auth_sign_in)
             is BrowserDialog.Download -> stringResource(R.string.downloads)
             is BrowserDialog.DeleteDownload, is BrowserDialog.DeleteLocalDownload ->
                 stringResource(R.string.delete)
+            is BrowserDialog.RetryDangerousDownload -> stringResource(R.string.download_retry)
             BrowserDialog.ClearSiteData -> stringResource(R.string.dialog_delete_all)
             is BrowserDialog.HttpNavigation -> stringResource(R.string.dialog_continue)
             is BrowserDialog.JavaScript -> stringResource(R.string.dialog_confirm)
@@ -1386,7 +1710,10 @@ private fun BrowserDialogView(dialog: BrowserDialog, controller: BrowserControll
         dismissButton = {
             if (dialog !is BrowserDialog.Notice && !(dialog is BrowserDialog.JavaScript &&
                     dialog.kind == JavaScriptDialogKind.ALERT))
-                TextButton(onClick = controller::cancelDialog,
+                BrowserTextButton(onClick = {
+                    if (dialog is BrowserDialog.Permission) controller.denySitePermission(false)
+                    else controller.cancelDialog()
+                },
                     modifier = Modifier.heightIn(min = 48.dp)) {
                     Text(stringResource(R.string.cancel))
                 }

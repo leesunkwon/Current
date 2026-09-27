@@ -21,9 +21,10 @@ internal class TabRestoration(private val store: BrowserStore) {
     companion object {
         fun fromRecord(record: TabRecord): BrowserTab = BrowserTab(record.id,
             url = record.url, title = record.title, desktopMode = record.desktopMode,
-            pinned = record.pinned)
+            pinned = record.pinned, groupName = record.groupName)
 
         fun toRecord(tab: BrowserTab, position: Int, selected: Boolean): TabRecord =
-            TabRecord(tab.id, position, tab.url, tab.title, selected, tab.desktopMode, tab.pinned)
+            TabRecord(tab.id, position, tab.url, tab.title, selected, tab.desktopMode,
+                tab.pinned, tab.groupName)
     }
 }

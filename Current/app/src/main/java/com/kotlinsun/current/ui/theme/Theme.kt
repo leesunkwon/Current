@@ -82,12 +82,13 @@ private val DarkColorScheme = darkColorScheme(
     surfaceContainerHighest = BrowserDarkOutline,
 )
 
+// 아이콘 8, 칩 12, 버튼·입력 16, 카드 20, 대화상자 24dp.
 private val BrowserShapes = Shapes(
-    extraSmall = RoundedCornerShape(2.dp),
-    small = RoundedCornerShape(4.dp),
-    medium = RoundedCornerShape(6.dp),
-    large = RoundedCornerShape(8.dp),
-    extraLarge = RoundedCornerShape(10.dp),
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(24.dp),
 )
 
 @Composable

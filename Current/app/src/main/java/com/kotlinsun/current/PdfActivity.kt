@@ -71,7 +71,7 @@ class PdfActivity : AppCompatActivity() {
         fun buttonBackground(fill: Int, border: Int? = null): RippleDrawable {
             val shape = GradientDrawable().apply {
                 setColor(fill)
-                cornerRadius = dp(6).toFloat()
+                cornerRadius = dp(16).toFloat()
                 border?.let { setStroke(dp(1), it) }
             }
             return RippleDrawable(ColorStateList.valueOf(if (dark) 0x33FFFFFF else 0x22000000),

@@ -3,6 +3,8 @@ package com.kotlinsun.current.browser
 import android.view.View
 import com.kotlinsun.current.R
 import com.kotlinsun.current.data.BookmarkRecord
+import com.kotlinsun.current.data.BookmarkFolderRecord
+import com.kotlinsun.current.data.SitePermissionRecord
 import com.kotlinsun.current.data.DownloadRecord
 import com.kotlinsun.current.data.HistoryRecord
 import com.kotlinsun.current.data.LocalDownloadRecord
@@ -13,7 +15,7 @@ import com.kotlinsun.current.engine.SiteInfo
 import com.kotlinsun.current.engine.TabMode
 import com.kotlinsun.current.engine.WebPermissionKind
 
-enum class BrowserPage { WEB, TABS, HISTORY, BOOKMARKS, DOWNLOADS, PRIVACY, SITE_INFO, SETTINGS }
+enum class BrowserPage { WEB, TABS, HISTORY, BOOKMARKS, DOWNLOADS, PRIVACY, SITE_INFO, SITE_PERMISSIONS, SETTINGS }
 enum class ThemeChoice(val labelRes: Int) {
     SYSTEM(R.string.theme_system), LIGHT(R.string.theme_light), DARK(R.string.theme_dark)
 }
@@ -34,6 +36,7 @@ data class BrowserTab(
     val favicon: ByteArray? = null,
     val desktopMode: Boolean = false,
     val pinned: Boolean = false,
+    val groupName: String? = null,
 )
 
 data class AddressSuggestion(
@@ -48,6 +51,7 @@ data class BookmarkImportPreview(
     val total: Int,
     val newCount: Int,
     val duplicateCount: Int,
+    val folderCount: Int = 0,
     val sample: List<String>,
 )
 
@@ -70,9 +74,13 @@ sealed interface BrowserDialog {
         val kind: JavaScriptDialogKind,
         val defaultValue: String?,
     ) : BrowserDialog
-    data class Permission(val origin: String, val kinds: Set<WebPermissionKind>) : BrowserDialog
-    data class Download(val fileName: String, val url: String, val privateMode: Boolean) : BrowserDialog
+    data class Permission(val origin: String, val kinds: Set<WebPermissionKind>,
+                          val canRemember: Boolean) : BrowserDialog
+    data class HttpAuthentication(val host: String, val realm: String) : BrowserDialog
+    data class Download(val fileName: String, val url: String, val privateMode: Boolean,
+                        val dangerous: Boolean) : BrowserDialog
     data class DeleteDownload(val id: Long, val fileName: String) : BrowserDialog
+    data class RetryDangerousDownload(val id: Long, val fileName: String) : BrowserDialog
     data class DeleteLocalDownload(val id: Long, val fileName: String) : BrowserDialog
     data class HttpNavigation(val url: String) : BrowserDialog
     data object ClearSiteData : BrowserDialog
@@ -104,6 +112,8 @@ data class BrowserUiState(
     val lastClosedTabId: String? = null,
     val history: List<HistoryRecord> = emptyList(),
     val bookmarks: List<BookmarkRecord> = emptyList(),
+    val bookmarkFolders: List<BookmarkFolderRecord> = emptyList(),
+    val savedSitePermissions: List<SitePermissionRecord> = emptyList(),
     val bookmarkImportPreview: BookmarkImportPreview? = null,
     val downloads: List<DownloadItem> = emptyList(),
     val localDownloads: List<LocalDownloadRecord> = emptyList(),

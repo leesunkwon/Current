@@ -23,7 +23,7 @@ import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,6 +31,20 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowInsetsCompat
@@ -47,6 +61,7 @@ import com.kotlinsun.current.ui.theme.CurrentTheme
 import java.io.File
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.CancellationException
 
 class MainActivity : ComponentActivity(), BrowserHost {
     private lateinit var controller: BrowserController
@@ -155,8 +170,40 @@ class MainActivity : ComponentActivity(), BrowserHost {
                 }
             }
             CurrentTheme(darkTheme = dark) {
-                BackHandler(enabled = !ui.showOnboarding) { controller.handleSystemBack() }
-                BrowserScreen(controller)
+                var backProgress by remember { mutableFloatStateOf(0f) }
+                PredictiveBackHandler(enabled = !ui.showOnboarding && controller.canHandleSystemBack()) {
+                    progress ->
+                    val targetId = ui.selectedId
+                    val targetPage = ui.page
+                    try {
+                        progress.collect { backProgress = it.progress }
+                        if (controller.ui.value.selectedId == targetId &&
+                            controller.ui.value.page == targetPage && controller.canHandleSystemBack())
+                            controller.handleSystemBack()
+                    } catch (error: CancellationException) {
+                        throw error
+                    } finally {
+                        backProgress = 0f
+                    }
+                }
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    Box(Modifier.fillMaxSize().graphicsLayer {
+                        val amount = backProgress.coerceIn(0f, 1f)
+                        scaleX = 1f - amount * 0.035f
+                        scaleY = 1f - amount * 0.035f
+                        translationX = size.width * amount * 0.12f
+                        alpha = 1f - amount * 0.12f
+                    }) { BrowserScreen(controller) }
+                    if (backProgress > 0f) controller.backPreviewLabel()?.let { target ->
+                        Surface(Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp)
+                            .graphicsLayer { alpha = backProgress.coerceIn(0f, 1f) },
+                            shape = MaterialTheme.shapes.medium,
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                            Text(target, Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                maxLines = 1)
+                        }
+                    }
+                }
             }
         }
     }
@@ -391,6 +438,11 @@ class MainActivity : ComponentActivity(), BrowserHost {
         openWithExternalApp(uri, mime)
     }
 
+    override fun openDownloadsFolder() {
+        runCatching { startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS)) }
+            .onFailure { Toast.makeText(this, R.string.downloads_folder_unavailable, Toast.LENGTH_LONG).show() }
+    }
+
     override fun openPdf(id: Long, privateMode: Boolean) {
         val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val uri = runCatching { manager.getUriForDownloadedFile(id) }.getOrNull()
@@ -465,9 +517,18 @@ class MainActivity : ComponentActivity(), BrowserHost {
         if (scheme in setOf("http", "https", "file", "content", "javascript", "data", "blob", "about")) return
         val fallbackMode = if (privateMode) com.kotlinsun.current.engine.TabMode.PRIVATE
             else com.kotlinsun.current.engine.TabMode.NORMAL
-        fun openFallback(value: String?) {
-            if (value != null) controller.newTab(value, fallbackMode)
-            else Toast.makeText(this, R.string.external_app_unavailable, Toast.LENGTH_LONG).show()
+        fun openFallback(value: String?, packageId: String? = null) {
+            if (value != null) { controller.newTab(value, fallbackMode); return }
+            val validPackage = packageId?.takeIf { it.matches(
+                Regex("[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+")) }
+            if (validPackage != null) {
+                val market = Intent(Intent.ACTION_VIEW,
+                    Uri.parse("market://details?id=$validPackage")).addCategory(Intent.CATEGORY_BROWSABLE)
+                if (runCatching { startActivity(market) }.isSuccess) return
+                controller.newTab("https://play.google.com/store/apps/details?id=$validPackage", fallbackMode)
+                return
+            }
+            Toast.makeText(this, R.string.external_app_unavailable, Toast.LENGTH_LONG).show()
         }
         val fallback: String?
         val external = if (scheme == "intent") {
@@ -478,7 +539,7 @@ class MainActivity : ComponentActivity(), BrowserHost {
             if (dataScheme == null || dataScheme in setOf("file", "content", "javascript",
                     "data", "blob", "about", "intent") ||
                 (dataScheme in setOf("http", "https") && parsed.`package`.isNullOrBlank())) {
-                openFallback(fallback)
+                openFallback(fallback, parsed.`package`)
                 return
             }
             Intent(Intent.ACTION_VIEW, parsed.data).apply { `package` = parsed.`package` }
@@ -491,14 +552,17 @@ class MainActivity : ComponentActivity(), BrowserHost {
         external.selector = null
         external.flags = 0
         external.clipData = null
+        val fallbackPackage = if (scheme == "intent") external.`package`
+            else if (scheme == "market") runCatching { uri.getQueryParameter("id") }.getOrNull()
+            else null
         try {
             startActivity(external)
         } catch (_: ActivityNotFoundException) {
-            openFallback(fallback)
+            openFallback(fallback, fallbackPackage)
         } catch (_: SecurityException) {
-            openFallback(fallback)
+            openFallback(fallback, fallbackPackage)
         } catch (_: IllegalArgumentException) {
-            openFallback(fallback)
+            openFallback(fallback, fallbackPackage)
         }
     }
 }

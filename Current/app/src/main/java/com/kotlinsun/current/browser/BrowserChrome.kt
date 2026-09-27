@@ -11,7 +11,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -107,7 +106,7 @@ internal fun BrowserMenu(
             Box(Modifier.padding(10.dp)) {
                 Surface(Modifier.width(menuWidth).heightIn(max = menuHeight)
                     .semantics { paneTitle = menuTitle },
-                    shape = MaterialTheme.shapes.large,
+                    shape = MaterialTheme.shapes.extraLarge,
                     color = MaterialTheme.colorScheme.surface,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     shadowElevation = 4.dp,
@@ -202,6 +201,7 @@ internal fun BrowserFindBar(ui: BrowserUiState, controller: BrowserController) {
             modifier = modifier.focusRequester(focusRequester).semantics {
                 contentDescription = findLabel
             },
+            shape = MaterialTheme.shapes.medium,
             singleLine = true,
             placeholder = { Text(findLabel) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -261,7 +261,7 @@ private fun BrowserMenuItem(label: String, icon: ImageVector, onClick: () -> Uni
         .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(38.dp).background(MaterialTheme.colorScheme.primaryContainer,
-            MaterialTheme.shapes.small), contentAlignment = Alignment.Center) {
+            MaterialTheme.shapes.extraSmall), contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colorScheme.primary)
         }
@@ -315,7 +315,7 @@ internal fun BrowserBottomBar(ui: BrowserUiState, controller: BrowserController)
                 IconButton(onClick = { controller.showPage(BrowserPage.TABS) },
                     modifier = Modifier.size(48.dp).semantics { contentDescription = tabCountDescription }) {
                     Box(Modifier.size(27.dp).border(1.5.dp, Color.White,
-                        RoundedCornerShape(7.dp)), contentAlignment = Alignment.Center) {
+                        MaterialTheme.shapes.extraSmall), contentAlignment = Alignment.Center) {
                         Text(ui.visibleTabs.size.toString(), style = MaterialTheme.typography.bodySmall,
                             color = Color.White, maxLines = 1)
                     }

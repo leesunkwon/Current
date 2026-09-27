@@ -41,6 +41,7 @@ data class TabRecord(
     val selected: Boolean,
     @ColumnInfo(defaultValue = "0") val desktopMode: Boolean = false,
     @ColumnInfo(defaultValue = "0") val pinned: Boolean = false,
+    val groupName: String? = null,
 )
 
 @Dao
@@ -93,7 +94,58 @@ data class BookmarkRecord(
     val url: String,
     val title: String,
     val createdAt: Long,
+    val folderId: String? = null,
+    @ColumnInfo(defaultValue = "0") val pinnedToHome: Boolean = false,
 )
+
+@Entity(tableName = "bookmark_folders")
+data class BookmarkFolderRecord(
+    @PrimaryKey val id: String,
+    val name: String,
+    val parentId: String?,
+    val createdAt: Long,
+)
+
+@Dao
+interface BookmarkFolderDao {
+    @Query("SELECT * FROM bookmark_folders ORDER BY name COLLATE NOCASE ASC")
+    suspend fun getAll(): List<BookmarkFolderRecord>
+
+    @Insert
+    suspend fun insert(record: BookmarkFolderRecord)
+
+    @Update
+    suspend fun update(record: BookmarkFolderRecord)
+
+    @Query("DELETE FROM bookmark_folders WHERE id = :id")
+    suspend fun delete(id: String)
+
+    @Query("UPDATE bookmark_folders SET parentId = :parentId WHERE parentId = :id")
+    suspend fun moveChildren(id: String, parentId: String?)
+}
+
+@Entity(tableName = "site_permissions", primaryKeys = ["origin", "kind"])
+data class SitePermissionRecord(
+    val origin: String,
+    val kind: String,
+    val allowed: Boolean,
+    val updatedAt: Long,
+)
+
+@Dao
+interface SitePermissionDao {
+    @Query("SELECT * FROM site_permissions ORDER BY origin ASC, kind ASC")
+    suspend fun getAll(): List<SitePermissionRecord>
+
+    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    suspend fun insert(record: SitePermissionRecord)
+
+    @Query("DELETE FROM site_permissions WHERE origin = :origin AND kind = :kind")
+    suspend fun delete(origin: String, kind: String)
+
+    @Query("DELETE FROM site_permissions")
+    suspend fun deleteAll()
+}
 
 @Dao
 interface BookmarkDao {
@@ -111,6 +163,9 @@ interface BookmarkDao {
 
     @Query("DELETE FROM bookmarks WHERE id = :id")
     suspend fun delete(id: String)
+
+    @Query("UPDATE bookmarks SET folderId = :parentId WHERE folderId = :id")
+    suspend fun moveFromFolder(id: String, parentId: String?)
 }
 
 @Entity(tableName = "downloads")
@@ -157,11 +212,14 @@ interface DownloadDao {
 }
 
 @Database(entities = [TabRecord::class, HistoryRecord::class, BookmarkRecord::class,
-    DownloadRecord::class, LocalDownloadRecord::class], version = 5, exportSchema = false)
+    BookmarkFolderRecord::class, SitePermissionRecord::class,
+    DownloadRecord::class, LocalDownloadRecord::class], version = 6, exportSchema = false)
 abstract class BrowserDatabase : RoomDatabase() {
     abstract fun tabDao(): TabDao
     abstract fun historyDao(): HistoryDao
     abstract fun bookmarkDao(): BookmarkDao
+    abstract fun bookmarkFolderDao(): BookmarkFolderDao
+    abstract fun sitePermissionDao(): SitePermissionDao
     abstract fun downloadDao(): DownloadDao
     abstract fun localDownloadDao(): LocalDownloadDao
 }
@@ -189,6 +247,16 @@ private val migration3To4 = object : Migration(3, 4) {
 private val migration4To5 = object : Migration(4, 5) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE `tabs` ADD COLUMN `pinned` INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
+private val migration5To6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `tabs` ADD COLUMN `groupName` TEXT")
+        db.execSQL("ALTER TABLE `bookmarks` ADD COLUMN `folderId` TEXT")
+        db.execSQL("ALTER TABLE `bookmarks` ADD COLUMN `pinnedToHome` INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("CREATE TABLE IF NOT EXISTS `bookmark_folders` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `parentId` TEXT, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+        db.execSQL("CREATE TABLE IF NOT EXISTS `site_permissions` (`origin` TEXT NOT NULL, `kind` TEXT NOT NULL, `allowed` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`origin`, `kind`))")
     }
 }
 
@@ -237,7 +305,7 @@ class BrowserStore private constructor(context: Context) {
 
     private val application = context.applicationContext
     private val database = Room.databaseBuilder(application, BrowserDatabase::class.java, "browser.db")
-        .addMigrations(migration1To2, migration2To3, migration3To4, migration4To5).build()
+        .addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6).build()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val tabOperations = Channel<TabOperation>(Channel.UNLIMITED)
     private val stateOperations = Channel<StateOperation>(Channel.UNLIMITED)
@@ -404,13 +472,32 @@ class BrowserStore private constructor(context: Context) {
     suspend fun deleteHistorySince(from: Long) = database.historyDao().deleteSince(from)
 
     suspend fun loadBookmarks(): List<BookmarkRecord> = database.bookmarkDao().getAll()
+    suspend fun loadBookmarkFolders(): List<BookmarkFolderRecord> = database.bookmarkFolderDao().getAll()
+    suspend fun addBookmarkFolder(record: BookmarkFolderRecord) = database.bookmarkFolderDao().insert(record)
+    suspend fun updateBookmarkFolder(record: BookmarkFolderRecord) = database.bookmarkFolderDao().update(record)
+    suspend fun deleteBookmarkFolder(id: String) = database.withTransaction {
+        val folder = database.bookmarkFolderDao().getAll().firstOrNull { it.id == id } ?: return@withTransaction
+        database.bookmarkDao().moveFromFolder(id, folder.parentId)
+        database.bookmarkFolderDao().moveChildren(id, folder.parentId)
+        database.bookmarkFolderDao().delete(id)
+    }
     suspend fun searchBookmarks(query: String): List<BookmarkRecord> = database.bookmarkDao().search(query)
     suspend fun addBookmark(record: BookmarkRecord) = database.bookmarkDao().insert(record)
-    suspend fun importBookmarks(records: List<BookmarkRecord>) = database.withTransaction {
+    suspend fun importBookmarks(records: List<BookmarkRecord>,
+                                folders: List<BookmarkFolderRecord> = emptyList()) = database.withTransaction {
+        folders.forEach { database.bookmarkFolderDao().insert(it) }
         records.forEach { database.bookmarkDao().insert(it) }
     }
     suspend fun updateBookmark(record: BookmarkRecord) = database.bookmarkDao().update(record)
     suspend fun deleteBookmark(id: String) = database.bookmarkDao().delete(id)
+
+    suspend fun loadSitePermissions(): List<SitePermissionRecord> = database.sitePermissionDao().getAll()
+    suspend fun saveSitePermissions(records: List<SitePermissionRecord>) = database.withTransaction {
+        records.forEach { database.sitePermissionDao().insert(it) }
+    }
+    suspend fun deleteSitePermission(origin: String, kind: String) =
+        database.sitePermissionDao().delete(origin, kind)
+    suspend fun clearSitePermissions() = database.sitePermissionDao().deleteAll()
 
     suspend fun loadDownloads(): List<DownloadRecord> = database.downloadDao().getAll()
     suspend fun addDownload(record: DownloadRecord) = database.downloadDao().insert(record)

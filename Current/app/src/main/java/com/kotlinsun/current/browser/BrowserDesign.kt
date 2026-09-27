@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Language
@@ -53,7 +52,7 @@ import com.kotlinsun.current.R
 @Composable
 internal fun CurrentBrandIcon(
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(6.dp),
+    shape: Shape,
 ) {
     Image(
         painter = painterResource(R.drawable.current_icon_final),
@@ -66,7 +65,7 @@ internal fun CurrentBrandIcon(
 @Composable
 internal fun BrowserInputSurface(
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(10.dp),
+    shape: Shape,
     focused: Boolean = false,
     error: Boolean = false,
     content: @Composable BoxScope.() -> Unit,
@@ -93,11 +92,11 @@ internal fun WelcomeScreen(onStart: () -> Unit) {
         Row(Modifier.fillMaxWidth().padding(top = 24.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {
-            Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surface,
+            Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                 Row(Modifier.padding(start = 6.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    CurrentBrandIcon(Modifier.size(24.dp), MaterialTheme.shapes.small)
+                    CurrentBrandIcon(Modifier.size(24.dp), MaterialTheme.shapes.extraSmall)
                     Text(stringResource(R.string.app_name), modifier = Modifier.padding(start = 8.dp),
                         style = MaterialTheme.typography.labelLarge)
                 }

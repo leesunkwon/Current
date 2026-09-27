@@ -20,6 +20,7 @@ import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
+import android.webkit.HttpAuthHandler
 import android.webkit.JsPromptResult
 import android.webkit.JsResult
 import android.webkit.PermissionRequest
@@ -34,6 +35,7 @@ import android.webkit.WebViewDatabase
 import android.net.http.SslError
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebMessagePortCompat
 import androidx.webkit.ProfileStore
@@ -47,6 +49,7 @@ import com.kotlinsun.current.engine.EngineSession
 import com.kotlinsun.current.engine.EngineState
 import com.kotlinsun.current.engine.FileSelectionRequest
 import com.kotlinsun.current.engine.FullScreenRequest
+import com.kotlinsun.current.engine.HttpAuthenticationRequest
 import com.kotlinsun.current.engine.JavaScriptDialogKind
 import com.kotlinsun.current.engine.JavaScriptDialogRequest
 import com.kotlinsun.current.engine.LinkTarget
@@ -155,6 +158,12 @@ private class WebViewSession(
             setSupportMultipleWindows(true)
             setGeolocationEnabled(true)
         }
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
+            runCatching {
+                WebSettingsCompat.setWebAuthenticationSupport(webView.settings,
+                    WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_BROWSER)
+            }
+        }
         applySettings(config.allowThirdPartyCookies, config.textZoom)
         setDesktopMode(config.desktopMode)
         webView.setFindListener { activeIndex, total, done ->
@@ -234,6 +243,20 @@ private class WebViewSession(
                 callback.backToSafety(true)
                 if (request.isForMainFrame) update { it.copy(isLoading = false,
                     error = PageError(appContext.getString(R.string.engine_unsafe_site), request.url.toString())) }
+            }
+
+            override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler,
+                                                   requestHost: String, requestRealm: String) {
+                if (closed) { handler.cancel(); return }
+                val completion = Pending { handler.cancel() }
+                callbacks.onHttpAuthentication(id, object : HttpAuthenticationRequest {
+                    override val host = requestHost
+                    override val realm = requestRealm
+                    override fun proceed(username: String, password: String) = completion.finish {
+                        handler.proceed(username, password)
+                    }
+                    override fun cancel() = completion.cancel()
+                })
             }
 
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
@@ -755,6 +778,8 @@ private class WebViewSession(
     }
     override fun pause() { if (!closed) webView.onPause() }
     override fun resume() { if (!closed) webView.onResume() }
+    override fun pauseTimers() { if (!closed) webView.pauseTimers() }
+    override fun resumeTimers() { if (!closed) webView.resumeTimers() }
 
     override fun saveState(maxBytes: Int): ByteArray? {
         if (closed || !WebViewFeature.isFeatureSupported(WebViewFeature.SAVE_STATE)) return null

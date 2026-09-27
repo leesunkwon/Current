@@ -11,10 +11,7 @@ internal class SitePermissionCoordinator {
         private set
 
     fun begin(request: WebPermissionRequest): Boolean {
-        val origin = runCatching { Uri.parse(request.origin) }.getOrNull()
-        val permittedOrigin = origin?.host != null && (origin.scheme == "https" ||
-            (origin.scheme == "http" && origin.host == "localhost"))
-        if (!permittedOrigin || pending != null) {
+        if (canonicalOrigin(request.origin) == null || pending != null) {
             request.deny()
             return false
         }
@@ -22,7 +19,7 @@ internal class SitePermissionCoordinator {
         return true
     }
 
-    fun approve(host: BrowserHost?) {
+    fun approve(host: BrowserHost?, onResult: (Boolean) -> Unit = {}) {
         val request = pending ?: return
         val permissions = request.kinds.mapNotNull {
             when (it) {
@@ -35,6 +32,7 @@ internal class SitePermissionCoordinator {
         if (permissions.isEmpty()) {
             pending = null
             request.grant()
+            onResult(true)
             return
         }
         if (host == null) {
@@ -45,6 +43,7 @@ internal class SitePermissionCoordinator {
             if (pending === request) {
                 pending = null
                 if (granted) request.grant() else request.deny()
+                onResult(granted)
             }
         }
     }
@@ -59,5 +58,18 @@ internal class SitePermissionCoordinator {
         if (pending !== request) return false
         cancel()
         return true
+    }
+
+    companion object {
+        fun canonicalOrigin(value: String): String? = runCatching {
+            val uri = Uri.parse(value)
+            val scheme = uri.scheme?.lowercase() ?: return@runCatching null
+            val host = uri.host?.lowercase() ?: return@runCatching null
+            if (uri.userInfo != null || (scheme != "https" &&
+                    !(scheme == "http" && host == "localhost"))) return@runCatching null
+            val port = uri.port
+            "$scheme://$host" + if (port >= 0 && !(scheme == "https" && port == 443) &&
+                !(scheme == "http" && port == 80)) ":$port" else ""
+        }.getOrNull()
     }
 }
