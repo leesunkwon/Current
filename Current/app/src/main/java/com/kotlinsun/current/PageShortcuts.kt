@@ -19,7 +19,7 @@ import com.kotlinsun.current.browser.PwaSite
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
-internal object PageShortcuts {
+object PageShortcuts {
     enum class Result { REQUESTED, UPDATED, UNAVAILABLE }
     private const val EXTRA_ID = "shortcut_id"
     private val pending = ConcurrentHashMap<String, Long>()
@@ -42,7 +42,7 @@ internal object PageShortcuts {
         }
         target.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val pinned = manager.pinnedShortcuts.firstOrNull { it.id == id }
-        val icon = favicon?.let(::siteIcon) ?: pinned?.icon
+        val icon = favicon?.let(::siteIcon)
             ?: Icon.createWithResource(context, R.mipmap.ic_launcher)
         val label = title.ifBlank { Uri.parse(url).host.orEmpty() }.take(25)
         val shortcut = ShortcutInfo.Builder(context, id)
