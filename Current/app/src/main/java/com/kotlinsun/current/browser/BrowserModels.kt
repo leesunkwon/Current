@@ -10,6 +10,7 @@ import com.kotlinsun.current.data.HistoryRecord
 import com.kotlinsun.current.data.LocalDownloadRecord
 import com.kotlinsun.current.engine.EngineState
 import com.kotlinsun.current.engine.ReadablePage
+import com.kotlinsun.current.engine.ReadableBlock
 import com.kotlinsun.current.engine.JavaScriptDialogKind
 import com.kotlinsun.current.engine.LinkTarget
 import com.kotlinsun.current.engine.SiteInfo
@@ -136,6 +137,13 @@ data class BrowserUiState(
     val findTotal: Int = 0,
     val readerPage: ReadablePage? = null,
     val readerSpeaking: Boolean = false,
+    val readerSpeechPaused: Boolean = false,
+    val readerSpeechLanguage: String = "ko",
+    val readerTranslation: List<ReadableBlock>? = null,
+    val readerTranslating: Boolean = false,
+    val readerTranslationProgress: Int = 0,
+    val readerTranslationTotal: Int = 0,
+    val readerTranslationLanguage: String = "ko",
 ) {
     val selectedId: String? get() = if (activeMode == TabMode.NORMAL) selectedNormalId else selectedPrivateId
     val selectedTab: BrowserTab? get() = tabs.firstOrNull { it.id == selectedId }

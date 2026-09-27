@@ -15,16 +15,37 @@ internal object PwaSupport {
     suspend fun inspect(pageUrl: String, manifestUrl: String): PwaSite? = withContext(Dispatchers.IO) {
         runCatching {
             if (!sameOrigin(pageUrl, manifestUrl)) return@runCatching null
-            val connection = (URI(manifestUrl).toURL().openConnection() as HttpURLConnection).apply {
-                connectTimeout = 5000
-                readTimeout = 5000
-                instanceFollowRedirects = false
-                setRequestProperty("Accept", "application/manifest+json, application/json")
-            }
+            var resolvedManifestUrl = manifestUrl
+            var connection: HttpURLConnection? = null
             try {
-                if (connection.responseCode != 200 || connection.contentLengthLong > 131072L)
+                for (hop in 0..3) {
+                    val candidate = (URI(resolvedManifestUrl).toURL()
+                        .openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 5000
+                        readTimeout = 5000
+                        instanceFollowRedirects = false
+                        setRequestProperty("Accept", "application/manifest+json, application/json")
+                    }
+                    val status = runCatching { candidate.responseCode }.getOrElse {
+                        candidate.disconnect()
+                        throw it
+                    }
+                    if (status in 300..399 && hop < 3) {
+                        val location = candidate.getHeaderField("Location")
+                        candidate.disconnect()
+                        if (location.isNullOrBlank()) return@runCatching null
+                        val next = URI(resolvedManifestUrl).resolve(location).normalize().toString()
+                        if (!sameOrigin(pageUrl, next)) return@runCatching null
+                        resolvedManifestUrl = next
+                        continue
+                    }
+                    connection = candidate
+                    break
+                }
+                val active = connection ?: return@runCatching null
+                if (active.responseCode != 200 || active.contentLengthLong > 131072L)
                     return@runCatching null
-                val bytes = connection.inputStream.use { input ->
+                val bytes = active.inputStream.use { input ->
                     val output = ByteArrayOutputStream()
                     val buffer = ByteArray(8192)
                     while (output.size() <= 131072) {
@@ -38,7 +59,7 @@ internal object PwaSupport {
                 val manifest = JSONObject(bytes.toString(Charsets.UTF_8))
                 if (manifest.optString("display") !in setOf("standalone", "fullscreen", "minimal-ui"))
                     return@runCatching null
-                val base = URI(manifestUrl)
+                val base = URI(resolvedManifestUrl)
                 val start = base.resolve(manifest.optString("start_url").ifBlank { pageUrl })
                     .normalize().toString()
                 val defaultScope = URI(start).resolve("./").toString()
@@ -50,7 +71,7 @@ internal object PwaSupport {
                     manifest.optString("name")
                 }.ifBlank { Uri.parse(pageUrl).host.orEmpty() }
                 PwaSite(title.take(80), start, scope)
-            } finally { connection.disconnect() }
+            } finally { connection?.disconnect() }
         }.getOrNull()
     }
 

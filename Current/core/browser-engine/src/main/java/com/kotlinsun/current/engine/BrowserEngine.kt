@@ -17,6 +17,7 @@ data class SessionConfig(
     val desktopMode: Boolean = false,
     val trackingProtection: Boolean = false,
     val trackingExceptions: Set<String> = emptySet(),
+    val navigationScope: String? = null,
 )
 
 data class NavigationEntry(val title: String, val url: String, val offset: Int)
@@ -40,9 +41,17 @@ data class EngineState(
     val canGoForward: Boolean = false,
     val error: PageError? = null,
     val blockedTrackers: Int = 0,
+    val blockedServiceWorkers: Int = 0,
 )
 
-data class ReadablePage(val url: String, val title: String, val text: String)
+data class ReadableBlock(val text: String, val heading: Boolean = false)
+data class ReadablePage(
+    val url: String,
+    val title: String,
+    val text: String,
+    val blocks: List<ReadableBlock> = emptyList(),
+    val language: String? = null,
+)
 
 data class PageError(val message: String, val failedUrl: String?)
 
@@ -160,6 +169,7 @@ interface EngineCallbacks {
     fun onVisited(sessionId: String, url: String, isReload: Boolean)
     fun onFavicon(sessionId: String, url: String, icon: ByteArray)
     fun onExternalNavigation(sessionId: String, url: String, hasGesture: Boolean)
+    fun onScopeExit(sessionId: String, url: String)
     fun onHttpNavigation(sessionId: String, url: String)
     fun onPopupRequested(parentId: String, request: PopupRequest): Boolean
     fun onPopupBlocked(parentId: String)

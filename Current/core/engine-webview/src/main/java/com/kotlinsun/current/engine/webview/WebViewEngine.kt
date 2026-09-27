@@ -41,8 +41,6 @@ import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebMessagePortCompat
 import androidx.webkit.ProfileStore
-import androidx.webkit.ServiceWorkerClientCompat
-import androidx.webkit.ServiceWorkerControllerCompat
 import com.kotlinsun.current.engine.BlobReceiver
 import com.kotlinsun.current.engine.BlobTransfer
 import com.kotlinsun.current.engine.BLOB_TRANSFER_CANCELLED
@@ -63,6 +61,7 @@ import com.kotlinsun.current.engine.PageError
 import com.kotlinsun.current.engine.PopupRequest
 import com.kotlinsun.current.engine.SessionConfig
 import com.kotlinsun.current.engine.ReadablePage
+import com.kotlinsun.current.engine.ReadableBlock
 import com.kotlinsun.current.engine.SiteInfo
 import com.kotlinsun.current.engine.WebPermissionKind
 import com.kotlinsun.current.engine.WebPermissionRequest
@@ -71,42 +70,12 @@ import kotlinx.coroutines.flow.StateFlow
 import java.io.ByteArrayOutputStream
 import java.io.ByteArrayInputStream
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONArray
 import org.json.JSONObject
 
 class WebViewEngine : BrowserEngine {
-    private val normalSessions = ConcurrentHashMap.newKeySet<WebViewSession>()
-    private var serviceWorkerConfigured = false
-
-    override fun createSession(context: Context, id: String, config: SessionConfig, callbacks: EngineCallbacks): EngineSession {
-        if (!serviceWorkerConfigured) {
-            serviceWorkerConfigured = true
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE) &&
-                WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_SHOULD_INTERCEPT_REQUEST)) {
-                runCatching { ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(
-                    object : ServiceWorkerClientCompat() {
-                        override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? {
-                            val headers = request.requestHeaders
-                            val source = headers.entries.firstOrNull {
-                                it.key.equals("Origin", true) || it.key.equals("Referer", true)
-                            }?.value ?: return null
-                            val origin = runCatching { Uri.parse(source) }.getOrNull() ?: return null
-                            if (origin.scheme != "https" && origin.scheme != "http") return null
-                            val originString = "${origin.scheme}://${origin.host ?: return null}" +
-                                if (origin.port >= 0) ":${origin.port}" else ""
-                            val candidates = normalSessions.filter { it.matchesOrigin(originString) }
-                            // A worker shared by multiple tabs has no reliable tab owner.
-                            if (candidates.size != 1) return null
-                            return candidates.single().interceptTracker(request.url, originString)
-                        }
-                    }) }
-            }
-        }
-        val session = WebViewSession(context, id, config, callbacks) { normalSessions.remove(it) }
-        if (config.profileName == null) normalSessions.add(session)
-        return session
-    }
+    override fun createSession(context: Context, id: String, config: SessionConfig,
+        callbacks: EngineCallbacks): EngineSession = WebViewSession(context, id, config, callbacks)
 
     override fun supportsPrivateMode(): Boolean = WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
 
@@ -139,7 +108,6 @@ private class WebViewSession(
     override val id: String,
     config: SessionConfig,
     private val callbacks: EngineCallbacks,
-    private val onClosed: (WebViewSession) -> Unit,
 ) : EngineSession {
     private val appContext = context.applicationContext
     private val mutableState = MutableStateFlow(EngineState())
@@ -159,6 +127,8 @@ private class WebViewSession(
     @Volatile private var trackingExceptions = config.trackingExceptions
     @Volatile private var topLevelOrigin: String? = null
     @Volatile private var topLevelHost: String? = null
+    private val normalProfile = config.profileName == null
+    private val navigationScope = config.navigationScope?.let(Uri::parse)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val blockedCount = java.util.concurrent.atomic.AtomicInteger()
     @Volatile private var navigationGeneration = 0
@@ -235,7 +205,13 @@ private class WebViewSession(
                 val scheme = uri.scheme?.lowercase()
                 val popupGesture = request.isForMainFrame && initialPopupGestureExpiresAt > 0 &&
                     SystemClock.elapsedRealtime() <= initialPopupGestureExpiresAt
-                if (request.isForMainFrame) initialPopupGestureExpiresAt = 0
+                if (request.isForMainFrame && scheme !in setOf("http", "https"))
+                    initialPopupGestureExpiresAt = 0
+                if (request.isForMainFrame && scheme in setOf("http", "https") &&
+                    navigationScope != null && !withinNavigationScope(uri, navigationScope)) {
+                    callbacks.onScopeExit(id, uri.toString())
+                    return true
+                }
                 if (scheme == "http" && request.isForMainFrame) {
                     if (approvedHttpUrl == uri.toString()) {
                         approvedHttpUrl = null
@@ -261,10 +237,10 @@ private class WebViewSession(
                         "$scheme://$host" + if (parsed.port >= 0) ":${parsed.port}" else ""
                     }
                 }
+                if (normalProfile) TrackerRequestRouter.update(id, topLevelOrigin,
+                    trackingEnabled, trackingExceptions)
                 navigationGeneration++
                 blockedCount.set(0)
-                if (url.startsWith("https://", true) || url.startsWith("http://", true))
-                    initialPopupGestureExpiresAt = 0
                 approvedHttpUrl = null
                 dialogsOnPage = 0
                 callbacks.onNavigationStarted(id)
@@ -567,6 +543,9 @@ private class WebViewSession(
             }
             false
         }
+        if (normalProfile) TrackerRequestRouter.register(id) { count ->
+            update { it.copy(blockedServiceWorkers = count) }
+        }
     }
 
     private fun showJavaScriptDialog(
@@ -601,7 +580,15 @@ private class WebViewSession(
         if (!closed) mutableState.value = block(mutableState.value)
     }
 
-    fun matchesOrigin(origin: String): Boolean = !closed && topLevelOrigin == origin
+    private fun withinNavigationScope(url: Uri, scope: Uri): Boolean {
+        if (url.scheme != "https" || scope.scheme != "https" ||
+            url.host.isNullOrBlank() || scope.host.isNullOrBlank() ||
+            url.userInfo != null || scope.userInfo != null ||
+            !url.host.equals(scope.host, true) ||
+            (if (url.port < 0) 443 else url.port) !=
+            (if (scope.port < 0) 443 else scope.port)) return false
+        return url.encodedPath.orEmpty().startsWith(scope.encodedPath.orEmpty())
+    }
 
     fun interceptTracker(resource: Uri, pageOrigin: String): WebResourceResponse? {
         if (closed || !trackingEnabled || pageOrigin != topLevelOrigin ||
@@ -921,6 +908,8 @@ private class WebViewSession(
     override fun applyTrackingProtection(enabled: Boolean, exceptions: Set<String>) {
         trackingExceptions = exceptions.toSet()
         trackingEnabled = enabled
+        if (normalProfile) TrackerRequestRouter.update(id, topLevelOrigin,
+            trackingEnabled, trackingExceptions)
     }
 
     override fun saveState(maxBytes: Int): ByteArray? {
@@ -1007,17 +996,39 @@ private class WebViewSession(
             if (!root) return null;
             const copy = root.cloneNode(true);
             copy.querySelectorAll('script,style,nav,aside,footer,header,form,button,svg').forEach(e => e.remove());
-            const text = (copy.innerText || copy.textContent || '').replace(/[ \t]+/g,' ').trim();
+            let total = 0;
+            const blocks = [];
+            copy.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,blockquote').forEach(e => {
+                if (blocks.length >= 500 || total >= 100000) return;
+                const text = (e.innerText || e.textContent || '').replace(/\s+/g,' ').trim();
+                if (!text || text.length < 3) return;
+                const limited = text.slice(0, 100000 - total);
+                blocks.push({text:limited,heading:/^H[1-6]$/.test(e.tagName)});
+                total += limited.length;
+            });
+            const text = blocks.length ? blocks.map(b => b.text).join('\n\n') :
+                (copy.innerText || copy.textContent || '').replace(/[ \t]+/g,' ').trim();
             if (text.length < 80) return null;
-            return JSON.stringify({url:location.href,title:document.title,text:text.slice(0,100000)});
+            return JSON.stringify({url:location.href,title:document.title,
+                text:blocks.length ? '' : text.slice(0,100000),
+                blocks:blocks,language:document.documentElement.lang || ''});
         })()""".trimIndent()
         webView.evaluateJavascript(script) { raw ->
             val page = runCatching {
-                if (raw.length > 250000 || raw == "null") return@runCatching null
+                if (raw.length > 1000000 || raw == "null") return@runCatching null
                 val value = JSONArray("[$raw]").getString(0)
                 val json = JSONObject(value)
+                val blocks = json.optJSONArray("blocks")?.let { entries ->
+                    (0 until entries.length()).mapNotNull { index ->
+                        entries.optJSONObject(index)?.let {
+                            ReadableBlock(it.optString("text"), it.optBoolean("heading"))
+                        }
+                    }
+                }.orEmpty()
                 ReadablePage(json.getString("url"), json.optString("title"),
-                    json.getString("text"))
+                    if (blocks.isEmpty()) json.getString("text") else
+                        blocks.joinToString("\n\n") { it.text }, blocks,
+                    json.optString("language").take(40).ifBlank { null })
             }.getOrNull()
             callback(page?.takeIf { !closed && it.url == expected &&
                 mutableState.value.url == expected })
@@ -1037,7 +1048,7 @@ private class WebViewSession(
     override fun close() {
         if (closed) return
         closed = true
-        onClosed(this)
+        if (normalProfile) TrackerRequestRouter.unregister(id)
         activeBlob?.cancel()
         runCatching { activeFullScreen?.close() }
         pending.toList().forEach { runCatching { it.cancel() } }

@@ -427,8 +427,9 @@ class MainActivity : ComponentActivity(), BrowserHost {
         true
     }.getOrDefault(false)
 
-    override fun pinPage(title: String, url: String, favicon: ByteArray?, pwa: PwaSite?): Boolean =
-        runCatching { PageShortcuts.request(this, title, url, favicon, pwa) }.getOrDefault(false)
+    override fun pinPage(title: String, url: String, favicon: ByteArray?, pwa: PwaSite?): PageShortcuts.Result =
+        runCatching { PageShortcuts.request(this, title, url, favicon, pwa) }
+            .getOrDefault(PageShortcuts.Result.UNAVAILABLE)
 
     override fun openWebApp(site: PwaSite) {
         startActivity(Intent(this, WebAppActivity::class.java).apply {
@@ -438,8 +439,12 @@ class MainActivity : ComponentActivity(), BrowserHost {
         })
     }
 
-    override fun speakReader(text: String, finished: (Boolean) -> Unit) =
-        readerSpeech.start(text, finished)
+    override fun speakReader(text: String, language: String, finished: (Boolean) -> Unit) =
+        readerSpeech.start(text, language, finished)
+
+    override fun pauseReaderSpeech() = readerSpeech.pause()
+
+    override fun resumeReaderSpeech() = readerSpeech.resume()
 
     override fun stopReaderSpeech() = readerSpeech.stop()
 

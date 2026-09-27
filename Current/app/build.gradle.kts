@@ -59,6 +59,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.pdf.viewer.fragment)
     implementation(libs.androidx.appcompat)
+    implementation(libs.mlkit.translate)
+    implementation(libs.mlkit.language.id)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

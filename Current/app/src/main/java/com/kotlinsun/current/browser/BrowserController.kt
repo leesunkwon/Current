@@ -14,6 +14,7 @@ import android.print.PrintDocumentAdapter
 import android.provider.MediaStore
 import android.webkit.WebSettings
 import com.kotlinsun.current.R
+import com.kotlinsun.current.PageShortcuts
 import com.kotlinsun.current.data.BookmarkRecord
 import com.kotlinsun.current.data.BookmarkFolderRecord
 import com.kotlinsun.current.data.BrowserStore
@@ -82,9 +83,11 @@ interface BrowserHost {
     fun requestDefaultBrowser(callback: (Boolean?) -> Unit)
     fun pickBookmarkFile(): Boolean
     fun createBookmarkFile(): Boolean
-    fun pinPage(title: String, url: String, favicon: ByteArray?, pwa: PwaSite?): Boolean
+    fun pinPage(title: String, url: String, favicon: ByteArray?, pwa: PwaSite?): PageShortcuts.Result
     fun openWebApp(site: PwaSite)
-    fun speakReader(text: String, finished: (Boolean) -> Unit)
+    fun speakReader(text: String, language: String, finished: (Boolean) -> Unit)
+    fun pauseReaderSpeech()
+    fun resumeReaderSpeech()
     fun stopReaderSpeech()
 }
 
@@ -93,6 +96,7 @@ class BrowserController(
     private val store: BrowserStore,
     private val engine: BrowserEngine,
 ) : EngineCallbacks {
+    private val readerTranslator = ReaderTranslator()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutableUi = MutableStateFlow(BrowserUiState())
     val ui: StateFlow<BrowserUiState> = mutableUi
@@ -170,7 +174,9 @@ class BrowserController(
 
     fun detach() {
         host?.stopReaderSpeech()
-        mutableUi.value = mutableUi.value.copy(readerSpeaking = false)
+        readerTranslator.cancel()
+        mutableUi.value = mutableUi.value.copy(readerSpeaking = false,
+            readerSpeechPaused = false, readerTranslating = false)
         cancelClientCertificate()
         privateUnlockGeneration++
         privateUnlockInFlight = false
@@ -749,11 +755,14 @@ class BrowserController(
             val shortcutSite = site?.takeIf { PwaSupport.withinScope(url, it.scopeUrl) }
                 ?.copy(startUrl = url)
             scope.launch {
-                val accepted = withContext(Dispatchers.IO) {
+                val result = withContext(Dispatchers.IO) {
                     currentHost.pinPage(tab.title, url, tab.favicon, shortcutSite)
                 }
-                if (host === currentHost) notice(context.getString(if (accepted)
-                    R.string.page_shortcut_pending else R.string.page_shortcut_unavailable))
+                if (host === currentHost) notice(context.getString(when (result) {
+                    PageShortcuts.Result.REQUESTED -> R.string.page_shortcut_pending
+                    PageShortcuts.Result.UPDATED -> R.string.page_shortcut_updated
+                    PageShortcuts.Result.UNAVAILABLE -> R.string.page_shortcut_unavailable
+                }))
             }
         }
     }
@@ -775,7 +784,9 @@ class BrowserController(
                 return@extractReadablePage
             if (result == null) notice(context.getString(R.string.reader_unavailable))
             else mutableUi.value = mutableUi.value.copy(page = BrowserPage.READER,
-                readerPage = result, readerSpeaking = false)
+                readerPage = result, readerSpeaking = false, readerSpeechPaused = false,
+                readerSpeechLanguage = result.language?.takeIf { it.isNotBlank() } ?: "ko",
+                readerTranslation = null, readerTranslating = false)
         }
     }
 
@@ -783,24 +794,76 @@ class BrowserController(
         val state = mutableUi.value
         if (state.readerSpeaking) {
             host?.stopReaderSpeech()
-            mutableUi.value = state.copy(readerSpeaking = false)
+            mutableUi.value = state.copy(readerSpeaking = false, readerSpeechPaused = false)
             return
         }
         if (state.activeMode == TabMode.PRIVATE) {
             notice(context.getString(R.string.reader_private_speech_unavailable)); return
         }
-        val text = state.readerPage?.text ?: return
+        val text = state.readerTranslation?.joinToString("\n\n") { it.text }
+            ?: state.readerPage?.text ?: return
+        val currentHost = host ?: return
+        val language = if (state.readerTranslation != null) state.readerTranslationLanguage
+            else state.readerSpeechLanguage
         mutableUi.value = state.copy(readerSpeaking = true)
-        host?.speakReader(text) { success ->
-            mutableUi.value = mutableUi.value.copy(readerSpeaking = false)
+        currentHost.speakReader(text, language) { success ->
+            mutableUi.value = mutableUi.value.copy(readerSpeaking = false, readerSpeechPaused = false)
             if (!success && mutableUi.value.page == BrowserPage.READER)
                 notice(context.getString(R.string.reader_speech_error))
         }
     }
 
+    fun pauseReaderSpeech() {
+        if (!mutableUi.value.readerSpeaking || mutableUi.value.readerSpeechPaused) return
+        host?.pauseReaderSpeech()
+        mutableUi.value = mutableUi.value.copy(readerSpeechPaused = true)
+    }
+
+    fun resumeReaderSpeech() {
+        if (!mutableUi.value.readerSpeaking || !mutableUi.value.readerSpeechPaused) return
+        host?.resumeReaderSpeech()
+        mutableUi.value = mutableUi.value.copy(readerSpeechPaused = false)
+    }
+
+    fun setReaderSpeechLanguage(language: String) {
+        if (language !in listOf("ko", "en", "ja", "zh", "es", "fr")) return
+        host?.stopReaderSpeech()
+        mutableUi.value = mutableUi.value.copy(readerSpeechLanguage = language,
+            readerSpeaking = false, readerSpeechPaused = false)
+    }
+
+    fun translateReader(language: String) {
+        if (language !in listOf("ko", "en", "ja", "zh", "es", "fr")) return
+        val page = mutableUi.value.readerPage ?: return
+        host?.stopReaderSpeech()
+        readerTranslator.cancel()
+        mutableUi.value = mutableUi.value.copy(readerTranslationLanguage = language,
+            readerTranslation = null, readerTranslating = true,
+            readerTranslationProgress = 0, readerTranslationTotal = 0,
+            readerSpeaking = false, readerSpeechPaused = false)
+        readerTranslator.translate(page, language, { done, total ->
+            if (mutableUi.value.readerPage === page) mutableUi.value = mutableUi.value.copy(
+                readerTranslationProgress = done, readerTranslationTotal = total)
+        }, completed@ { blocks ->
+            if (mutableUi.value.readerPage !== page) return@completed
+            mutableUi.value = mutableUi.value.copy(readerTranslation = blocks,
+                readerTranslating = false)
+            if (blocks == null) notice(context.getString(R.string.reader_translation_error))
+        })
+    }
+
+    fun showOriginalReader() {
+        host?.stopReaderSpeech()
+        readerTranslator.cancel()
+        mutableUi.value = mutableUi.value.copy(readerTranslation = null,
+            readerTranslating = false, readerSpeaking = false, readerSpeechPaused = false)
+    }
+
     private fun closeReader() {
         host?.stopReaderSpeech()
-        mutableUi.value = mutableUi.value.copy(readerPage = null, readerSpeaking = false)
+        readerTranslator.cancel()
+        mutableUi.value = mutableUi.value.copy(readerPage = null, readerSpeaking = false,
+            readerSpeechPaused = false, readerTranslation = null, readerTranslating = false)
     }
 
     fun printCurrentPage() {
@@ -1027,8 +1090,10 @@ class BrowserController(
     fun onStop() {
         foreground = false
         host?.stopReaderSpeech()
-        if (mutableUi.value.readerSpeaking)
-            mutableUi.value = mutableUi.value.copy(readerSpeaking = false)
+        readerTranslator.cancel()
+        if (mutableUi.value.readerSpeaking || mutableUi.value.readerTranslating)
+            mutableUi.value = mutableUi.value.copy(readerSpeaking = false,
+                readerSpeechPaused = false, readerTranslating = false)
         if (pendingClientCertificate?.first?.let { tab(it)?.mode == TabMode.PRIVATE } == true)
             cancelClientCertificate()
         if (mutableUi.value.tabs.any { it.mode == TabMode.PRIVATE } &&
@@ -2091,6 +2156,10 @@ class BrowserController(
         if (sessionId != mutableUi.value.selectedId || !hasGesture) return
         pendingExternalSessionId = sessionId
         mutableUi.value = mutableUi.value.copy(pendingExternalUrl = url)
+    }
+
+    override fun onScopeExit(sessionId: String, url: String) {
+        if (sessionId == mutableUi.value.selectedId && isWebUrl(url)) newTab(url)
     }
 
     override fun onNavigationStarted(sessionId: String) {
