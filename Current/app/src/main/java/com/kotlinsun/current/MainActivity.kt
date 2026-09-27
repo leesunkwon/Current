@@ -71,6 +71,7 @@ import com.kotlinsun.current.browser.BrowserHost
 import com.kotlinsun.current.browser.BrowserScreen
 import com.kotlinsun.current.browser.BrowserViewModel
 import com.kotlinsun.current.browser.ThemeChoice
+import com.kotlinsun.current.browser.PwaSite
 import com.kotlinsun.current.engine.FileSelectionRequest
 import com.kotlinsun.current.engine.ClientCertificateRequest
 import com.kotlinsun.current.engine.TabMode
@@ -102,6 +103,7 @@ class MainActivity : ComponentActivity(), BrowserHost {
     private var clientCertificate: ClientCertificateRequest? = null
     private var privateAuthSignal: CancellationSignal? = null
     private var pictureInPicture = mutableStateOf(false)
+    private val readerSpeech by lazy { ReaderSpeech(this) }
     private val bookmarkImportLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()) { uri ->
         controller.readBookmarkFile(uri)
@@ -301,6 +303,7 @@ class MainActivity : ComponentActivity(), BrowserHost {
     }
 
     override fun onDestroy() {
+        readerSpeech.stop()
         unregisterReceiver(downloadReceiver)
         cancelFileSelection()
         pendingPermissions?.invoke(false)
@@ -423,6 +426,22 @@ class MainActivity : ComponentActivity(), BrowserHost {
         bookmarkExportLauncher.launch("current-bookmarks.html")
         true
     }.getOrDefault(false)
+
+    override fun pinPage(title: String, url: String, favicon: ByteArray?, pwa: PwaSite?): Boolean =
+        runCatching { PageShortcuts.request(this, title, url, favicon, pwa) }.getOrDefault(false)
+
+    override fun openWebApp(site: PwaSite) {
+        startActivity(Intent(this, WebAppActivity::class.java).apply {
+            putExtra(WebAppActivity.EXTRA_START, site.startUrl)
+            putExtra(WebAppActivity.EXTRA_SCOPE, site.scopeUrl)
+            putExtra(WebAppActivity.EXTRA_TITLE, site.title)
+        })
+    }
+
+    override fun speakReader(text: String, finished: (Boolean) -> Unit) =
+        readerSpeech.start(text, finished)
+
+    override fun stopReaderSpeech() = readerSpeech.stop()
 
     private fun clearCameraCapture(keepFile: Boolean = false) {
         if (!keepFile) cameraFile?.let { runCatching { it.delete() } }

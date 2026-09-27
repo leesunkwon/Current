@@ -82,6 +82,10 @@ interface BrowserHost {
     fun requestDefaultBrowser(callback: (Boolean?) -> Unit)
     fun pickBookmarkFile(): Boolean
     fun createBookmarkFile(): Boolean
+    fun pinPage(title: String, url: String, favicon: ByteArray?, pwa: PwaSite?): Boolean
+    fun openWebApp(site: PwaSite)
+    fun speakReader(text: String, finished: (Boolean) -> Unit)
+    fun stopReaderSpeech()
 }
 
 class BrowserController(
@@ -165,6 +169,8 @@ class BrowserController(
     }
 
     fun detach() {
+        host?.stopReaderSpeech()
+        mutableUi.value = mutableUi.value.copy(readerSpeaking = false)
         cancelClientCertificate()
         privateUnlockGeneration++
         privateUnlockInFlight = false
@@ -377,6 +383,7 @@ class BrowserController(
             privateProfileName = profilePrefix + UUID.randomUUID()
         }
         if (foreground) {
+            if (mutableUi.value.page == BrowserPage.READER) closeReader()
             closeFind()
             clearSuggestions()
             dismissExternal()
@@ -413,6 +420,7 @@ class BrowserController(
             return
         }
         if (mode == mutableUi.value.activeMode) return
+        if (mutableUi.value.page == BrowserPage.READER) closeReader()
         if (mode == TabMode.NORMAL && privateUnlockInFlight) {
             privateUnlockGeneration++
             privateUnlockInFlight = false
@@ -442,6 +450,7 @@ class BrowserController(
 
     fun selectTab(id: String) {
         val selected = tab(id) ?: return
+        if (mutableUi.value.page == BrowserPage.READER) closeReader()
         if (id != mutableUi.value.selectedId) {
             cancelClientCertificate()
             closeFind()
@@ -473,6 +482,10 @@ class BrowserController(
 
     fun closeTab(id: String) {
         val closing = tab(id) ?: return
+        if (mutableUi.value.selectedId == id && mutableUi.value.page == BrowserPage.READER) {
+            closeReader()
+            mutableUi.value = mutableUi.value.copy(page = BrowserPage.WEB)
+        }
         if (pendingClientCertificate?.first == id) cancelClientCertificate()
         if (pendingExternalSessionId == id) dismissExternal()
         if (mutableUi.value.selectedId == id) closeFind()
@@ -632,6 +645,8 @@ class BrowserController(
     }
 
     fun showPage(page: BrowserPage) {
+        if (mutableUi.value.page == BrowserPage.READER && page != BrowserPage.READER)
+            closeReader()
         if (page != BrowserPage.BOOKMARKS && mutableUi.value.bookmarkImportPreview != null)
             cancelBookmarkImport()
         if (mutableUi.value.activeMode == TabMode.PRIVATE &&
@@ -704,6 +719,88 @@ class BrowserController(
 
     fun shareCurrentPage() {
         mutableUi.value.selectedTab?.url?.takeIf(::isWebUrl)?.let { host?.share(it) }
+    }
+
+    private fun inspectPwa(onResult: (PwaSite?) -> Unit) {
+        val tab = mutableUi.value.selectedTab ?: return
+        val url = tab.url?.takeIf { it.startsWith("https://", true) } ?: run {
+            onResult(null); return
+        }
+        val session = sessionForSelectedTab() ?: run { onResult(null); return }
+        session.manifestLink { link ->
+            scope.launch {
+                val site = link?.let { PwaSupport.inspect(url, it) }
+                if (mutableUi.value.selectedId == tab.id && mutableUi.value.selectedTab?.url == url)
+                    onResult(site)
+            }
+        }
+    }
+
+    fun pinCurrentPage() {
+        val tab = mutableUi.value.selectedTab ?: return
+        val url = tab.url?.takeIf(::isWebUrl) ?: return
+        if (tab.mode == TabMode.PRIVATE) {
+            notice(context.getString(R.string.page_shortcut_private_unavailable)); return
+        }
+        inspectPwa { site ->
+            if (!foreground || mutableUi.value.selectedId != tab.id ||
+                this.tab(tab.id)?.url != url) return@inspectPwa
+            val currentHost = host ?: return@inspectPwa
+            val shortcutSite = site?.takeIf { PwaSupport.withinScope(url, it.scopeUrl) }
+                ?.copy(startUrl = url)
+            scope.launch {
+                val accepted = withContext(Dispatchers.IO) {
+                    currentHost.pinPage(tab.title, url, tab.favicon, shortcutSite)
+                }
+                if (host === currentHost) notice(context.getString(if (accepted)
+                    R.string.page_shortcut_pending else R.string.page_shortcut_unavailable))
+            }
+        }
+    }
+
+    fun openCurrentWebApp() {
+        inspectPwa { site ->
+            if (!foreground) return@inspectPwa
+            if (site == null) notice(context.getString(R.string.pwa_unavailable))
+            else host?.openWebApp(site)
+        }
+    }
+
+    fun openReader() {
+        val tab = mutableUi.value.selectedTab ?: return
+        val url = tab.url ?: return
+        val session = sessionForSelectedTab() ?: return
+        session.extractReadablePage { result ->
+            if (mutableUi.value.selectedId != tab.id || mutableUi.value.selectedTab?.url != url)
+                return@extractReadablePage
+            if (result == null) notice(context.getString(R.string.reader_unavailable))
+            else mutableUi.value = mutableUi.value.copy(page = BrowserPage.READER,
+                readerPage = result, readerSpeaking = false)
+        }
+    }
+
+    fun toggleReaderSpeech() {
+        val state = mutableUi.value
+        if (state.readerSpeaking) {
+            host?.stopReaderSpeech()
+            mutableUi.value = state.copy(readerSpeaking = false)
+            return
+        }
+        if (state.activeMode == TabMode.PRIVATE) {
+            notice(context.getString(R.string.reader_private_speech_unavailable)); return
+        }
+        val text = state.readerPage?.text ?: return
+        mutableUi.value = state.copy(readerSpeaking = true)
+        host?.speakReader(text) { success ->
+            mutableUi.value = mutableUi.value.copy(readerSpeaking = false)
+            if (!success && mutableUi.value.page == BrowserPage.READER)
+                notice(context.getString(R.string.reader_speech_error))
+        }
+    }
+
+    private fun closeReader() {
+        host?.stopReaderSpeech()
+        mutableUi.value = mutableUi.value.copy(readerPage = null, readerSpeaking = false)
     }
 
     fun printCurrentPage() {
@@ -929,6 +1026,9 @@ class BrowserController(
 
     fun onStop() {
         foreground = false
+        host?.stopReaderSpeech()
+        if (mutableUi.value.readerSpeaking)
+            mutableUi.value = mutableUi.value.copy(readerSpeaking = false)
         if (pendingClientCertificate?.first?.let { tab(it)?.mode == TabMode.PRIVATE } == true)
             cancelClientCertificate()
         if (mutableUi.value.tabs.any { it.mode == TabMode.PRIVATE } &&
@@ -1994,6 +2094,10 @@ class BrowserController(
     }
 
     override fun onNavigationStarted(sessionId: String) {
+        if (sessionId == mutableUi.value.selectedId && mutableUi.value.page == BrowserPage.READER) {
+            closeReader()
+            mutableUi.value = mutableUi.value.copy(page = BrowserPage.WEB)
+        }
         if (pendingClientCertificate?.first == sessionId) cancelClientCertificate()
         if (pendingExternalSessionId == sessionId) dismissExternal()
         pendingHttpRedirects.remove(sessionId)

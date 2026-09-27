@@ -10,6 +10,7 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <queries>
+        <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
         <intent><action android:name="org.chromium.intent.action.PAY" /></intent>
         <intent><action android:name="org.chromium.intent.action.IS_READY_TO_PAY" /></intent>
         <intent><action android:name="org.chromium.intent.action.UPDATE_PAYMENT_DETAILS" /></intent>
@@ -38,6 +39,11 @@
             android:name=".PdfActivity"
             android:exported="false"
             android:theme="@style/Theme.Current.Pdf" />
+        <activity
+            android:name=".WebAppActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Current" />
+        <receiver android:name=".PageShortcutReceiver" android:exported="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -39,7 +39,10 @@ data class EngineState(
     val canGoBack: Boolean = false,
     val canGoForward: Boolean = false,
     val error: PageError? = null,
+    val blockedTrackers: Int = 0,
 )
+
+data class ReadablePage(val url: String, val title: String, val text: String)
 
 data class PageError(val message: String, val failedUrl: String?)
 
@@ -141,6 +144,8 @@ interface EngineSession {
     fun restoreState(bytes: ByteArray, expectedUrl: String?): Boolean
     fun capturePreview(): ByteArray?
     fun siteInfo(): SiteInfo
+    fun extractReadablePage(callback: (ReadablePage?) -> Unit)
+    fun manifestLink(callback: (String?) -> Unit)
     fun close()
 }
 

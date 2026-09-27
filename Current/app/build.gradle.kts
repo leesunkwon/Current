@@ -41,6 +41,7 @@ android {
 dependencies {
     implementation(project(":core:browser-engine"))
     implementation(project(":core:engine-webview"))
+    implementation(libs.androidx.webkit)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

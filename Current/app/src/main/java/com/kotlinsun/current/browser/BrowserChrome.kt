@@ -148,6 +148,18 @@ internal fun BrowserMenu(
                             BrowserMenuItem(stringResource(R.string.share_page), Icons.Filled.Share) {
                                 perform(controller::shareCurrentPage)
                             }
+                            if (ui.activeMode == TabMode.NORMAL) {
+                                BrowserMenuItem(stringResource(R.string.add_page_to_home), Icons.Filled.Home) {
+                                    perform(controller::pinCurrentPage)
+                                }
+                                if (url.startsWith("https://", true))
+                                    BrowserMenuItem(stringResource(R.string.open_web_app), Icons.Filled.Add) {
+                                        perform(controller::openCurrentWebApp)
+                                    }
+                            }
+                            BrowserMenuItem(stringResource(R.string.reader_mode), Icons.Filled.Info) {
+                                perform(controller::openReader)
+                            }
                             BrowserMenuItem(stringResource(R.string.print_page), Icons.Filled.Print) {
                                 perform(controller::printCurrentPage)
                             }

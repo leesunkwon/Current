@@ -214,6 +214,9 @@ internal fun SiteInfoScreen(ui: BrowserUiState, controller: BrowserController) {
             BrowserPanel(Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.tracking_protection),
                     style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.tracker_blocked_count,
+                    ui.selectedTab?.engine?.blockedTrackers ?: 0),
+                    style = MaterialTheme.typography.bodyMedium)
                 BrowserTextButton(onClick = controller::toggleTrackingException,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Text(stringResource(if (controller.isCurrentSiteTrackingException())

@@ -9,13 +9,14 @@ import com.kotlinsun.current.data.DownloadRecord
 import com.kotlinsun.current.data.HistoryRecord
 import com.kotlinsun.current.data.LocalDownloadRecord
 import com.kotlinsun.current.engine.EngineState
+import com.kotlinsun.current.engine.ReadablePage
 import com.kotlinsun.current.engine.JavaScriptDialogKind
 import com.kotlinsun.current.engine.LinkTarget
 import com.kotlinsun.current.engine.SiteInfo
 import com.kotlinsun.current.engine.TabMode
 import com.kotlinsun.current.engine.WebPermissionKind
 
-enum class BrowserPage { WEB, TABS, HISTORY, BOOKMARKS, DOWNLOADS, PRIVACY, SITE_INFO, SITE_PERMISSIONS, SETTINGS }
+enum class BrowserPage { WEB, READER, TABS, HISTORY, BOOKMARKS, DOWNLOADS, PRIVACY, SITE_INFO, SITE_PERMISSIONS, SETTINGS }
 enum class ThemeChoice(val labelRes: Int) {
     SYSTEM(R.string.theme_system), LIGHT(R.string.theme_light), DARK(R.string.theme_dark)
 }
@@ -133,6 +134,8 @@ data class BrowserUiState(
     val findQuery: String = "",
     val findActive: Int = 0,
     val findTotal: Int = 0,
+    val readerPage: ReadablePage? = null,
+    val readerSpeaking: Boolean = false,
 ) {
     val selectedId: String? get() = if (activeMode == TabMode.NORMAL) selectedNormalId else selectedPrivateId
     val selectedTab: BrowserTab? get() = tabs.firstOrNull { it.id == selectedId }

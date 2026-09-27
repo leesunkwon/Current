@@ -376,6 +376,7 @@ fun BrowserScreen(controller: BrowserController) {
                     }
                 }
                 ui.page == BrowserPage.TABS -> TabSwitcher(ui, controller)
+                ui.page == BrowserPage.READER -> ReaderScreen(ui, controller)
                 ui.page == BrowserPage.HISTORY -> HistoryScreen(ui, controller)
                 ui.page == BrowserPage.BOOKMARKS -> BookmarkScreen(ui, controller)
                 ui.page == BrowserPage.DOWNLOADS -> DownloadScreen(ui, controller)
@@ -440,6 +441,7 @@ fun BrowserScreen(controller: BrowserController) {
 @Composable
 private fun BrowserPage.label(): String = when (this) {
     BrowserPage.WEB -> stringResource(R.string.web_page)
+    BrowserPage.READER -> stringResource(R.string.reader_mode)
     BrowserPage.TABS -> stringResource(R.string.tabs)
     BrowserPage.HISTORY -> stringResource(R.string.history)
     BrowserPage.BOOKMARKS -> stringResource(R.string.bookmarks)
