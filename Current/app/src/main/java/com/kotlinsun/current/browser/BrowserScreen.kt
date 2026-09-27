@@ -121,12 +121,14 @@ fun BrowserScreen(controller: BrowserController) {
     val focus = LocalFocusManager.current
     var address by remember { mutableStateOf(TextFieldValue("")) }
     var editing by remember { mutableStateOf(false) }
+    var suggestionsVisible by remember { mutableStateOf(false) }
     var invalidAddress by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(ui.page, ui.selectedId, ui.activeMode, ui.showOnboarding) {
         menu = false
+        suggestionsVisible = false
     }
 
     LaunchedEffect(selected?.id, selected?.url, editing) {
@@ -144,29 +146,41 @@ fun BrowserScreen(controller: BrowserController) {
         return
     }
 
+    val dismissSuggestions: () -> Unit = {
+        suggestionsVisible = false
+        controller.clearSuggestions()
+    }
     val onAddressChange: (TextFieldValue) -> Unit = { next ->
-        val completed = if (next.composition == null && next.selection.collapsed &&
+        val textChanged = next.text != address.text
+        val completed = if (textChanged && next.composition == null && next.selection.collapsed &&
             next.selection.end == next.text.length) controller.inlineCompletion(next.text) else null
         address = if (completed != null) TextFieldValue(completed,
             selection = TextRange(next.text.length, completed.length)) else next
         invalidAddress = false
-        controller.updateSuggestions(next.text)
+        if (textChanged) {
+            suggestionsVisible = next.text.isNotBlank()
+            controller.updateSuggestions(next.text)
+        }
     }
     val onAddressFocus: (Boolean) -> Unit = { focused ->
         if (focused && !editing) {
+            dismissSuggestions()
             val raw = selected?.url.orEmpty()
             address = TextFieldValue(raw, selection = TextRange(0, raw.length))
         }
+        if (!focused) dismissSuggestions()
         editing = focused
     }
     val submitAddress: () -> Unit = {
         invalidAddress = !controller.submitAddress(address.text)
+        dismissSuggestions()
         if (!invalidAddress) {
             focus.clearFocus()
             editing = false
         }
     }
     val useSuggestion: (AddressSuggestion) -> Unit = { suggestion ->
+        suggestionsVisible = false
         controller.useSuggestion(suggestion)
         focus.clearFocus()
         editing = false
@@ -253,15 +267,16 @@ fun BrowserScreen(controller: BrowserController) {
                             }
                             BrowserAddressField(ui, address, editing, invalidAddress,
                                 onAddressChange, onAddressFocus, submitAddress, useSuggestion,
-                                controller::clearSuggestions,
-                                modifier = Modifier.weight(1f), flat = true)
+                                dismissSuggestions,
+                                modifier = Modifier.weight(1f), flat = true,
+                                suggestionsVisible = suggestionsVisible)
                         }
                         Spacer(Modifier.width(8.dp))
                         BrowserMenu(ui, controller, menu, onExpandedChange = { expanded ->
                             if (expanded) {
                                 focus.clearFocus()
                                 editing = false
-                                controller.clearSuggestions()
+                                dismissSuggestions()
                             }
                             menu = expanded
                         })
@@ -310,8 +325,9 @@ fun BrowserScreen(controller: BrowserController) {
                     ui, controller, chromePadding = padding, addressField = {
                         BrowserAddressField(ui, address, editing, invalidAddress,
                             onAddressChange, onAddressFocus, submitAddress, useSuggestion,
-                            controller::clearSuggestions,
-                            modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth())
+                            dismissSuggestions,
+                            modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth(),
+                            suggestionsVisible = suggestionsVisible)
                     })
                 selected != null -> {
                     val session = controller.sessionForSelectedTab()
@@ -362,9 +378,10 @@ private fun BrowserAddressField(
     onDismissSuggestions: () -> Unit,
     modifier: Modifier = Modifier,
     flat: Boolean = false,
+    suggestionsVisible: Boolean = false,
 ) {
     val isHome = ui.selectedTab?.url == null
-    val fieldShape = if (flat) RoundedCornerShape(6.dp) else CircleShape
+    val fieldShape = if (flat) RoundedCornerShape(16.dp) else CircleShape
     val addressInput: @Composable () -> Unit = {
         OutlinedTextField(
             value = value,
@@ -420,17 +437,18 @@ private fun BrowserAddressField(
             }
             Surface(Modifier.fillMaxWidth(), shape = fieldShape,
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
-                border = BorderStroke(if (isError) 2.dp else 1.dp, stroke),
-                tonalElevation = 0.dp) { addressInput() }
+                border = BorderStroke(if (isError) 2.dp else if (editing) 1.5.dp else 1.dp, stroke),
+                tonalElevation = 0.dp, shadowElevation = 2.dp) { addressInput() }
         } else {
             BrowserGlassSurface(Modifier.fillMaxWidth(), shape = fieldShape,
                 focused = editing, error = isError) { addressInput() }
         }
-        DropdownMenu(expanded = editing && ui.suggestions.isNotEmpty(),
+        DropdownMenu(expanded = editing && suggestionsVisible && ui.suggestions.isNotEmpty(),
             onDismissRequest = onDismissSuggestions,
             offset = DpOffset(0.dp, 8.dp),
-            modifier = Modifier.widthIn(max = 360.dp),
-            shape = if (flat) RoundedCornerShape(8.dp) else RoundedCornerShape(24.dp),
+            modifier = Modifier.widthIn(max = 360.dp).heightIn(max = 320.dp),
+            properties = PopupProperties(focusable = false),
+            shape = if (flat) RoundedCornerShape(16.dp) else RoundedCornerShape(24.dp),
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
             shadowElevation = 16.dp,
