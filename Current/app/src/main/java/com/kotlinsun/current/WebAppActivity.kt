@@ -488,7 +488,7 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
     private fun nextNotice() {
         if (prompt == null && noticeQueue.isNotEmpty()) prompt = Prompt.Notice(noticeQueue.removeFirst())
     }
-    private fun setPrompt(next: Prompt) { dismissPrompt(false); prompt = next }
+    private fun replacePrompt(next: Prompt) { dismissPrompt(false); prompt = next }
     private fun showNotice(message: String) {
         if (prompt == null) prompt = Prompt.Notice(message) else noticeQueue.addLast(message)
     }
@@ -563,7 +563,7 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
     override fun onFavicon(sessionId: String, url: String, icon: ByteArray) = Unit
     override fun onExternalNavigation(sessionId: String, url: String, hasGesture: Boolean) {
         if (hasGesture && sessionId == (popupSession ?: mainSession)?.id)
-            setPrompt(Prompt.External(sessionId, url))
+            replacePrompt(Prompt.External(sessionId, url))
     }
     override fun onScopeExit(sessionId: String, url: String) {
         if (sessionId == mainSession?.id) openInBrowser(url)
@@ -685,7 +685,7 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
     }
     override fun onJavaScriptDialog(sessionId: String, request: JavaScriptDialogRequest) {
         if (!isVisible(sessionId)) request.cancel()
-        else setPrompt(Prompt.Script(sessionId, request))
+        else replacePrompt(Prompt.Script(sessionId, request))
     }
     override fun onFullScreen(sessionId: String, request: FullScreenRequest) {
         if (!isVisible(sessionId)) { request.close(); return }
@@ -710,7 +710,7 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
             showNotice(it); return
         }
         val name = downloads.safeFileName(request)
-        setPrompt(Prompt.Download(sessionId, request, name,
+        replacePrompt(Prompt.Download(sessionId, request, name,
             DownloadSafety.isDangerous(name, request.mimeType)))
     }
 
@@ -796,7 +796,7 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
         if (decisions.all { it?.allowed == true }) {
             requestSitePermission(sessionId, request); return
         }
-        setPrompt(Prompt.Permission(sessionId, request))
+        replacePrompt(Prompt.Permission(sessionId, request))
     }
     override fun onPermissionCanceled(sessionId: String, request: WebPermissionRequest) {
         if ((prompt as? Prompt.Permission)?.request === request) dismissPrompt()
@@ -807,7 +807,7 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
     }
     override fun onHttpAuthentication(sessionId: String, request: HttpAuthenticationRequest) {
         if (!isVisible(sessionId)) request.cancel()
-        else setPrompt(Prompt.HttpAuth(sessionId, request))
+        else replacePrompt(Prompt.HttpAuth(sessionId, request))
     }
     override fun onClientCertificate(sessionId: String, request: ClientCertificateRequest) {
         if (!isVisible(sessionId) || clientCertificate != null) {

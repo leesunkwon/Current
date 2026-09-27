@@ -14,7 +14,7 @@ Kotlin, Jetpack Compose, Android System WebView로 만드는 Android 웹 브라�
 
 ## 작업 상태
 
-최종 정리: 2026-09-27. 아래 `[x]`는 **코드에 기능이 연결됨**을 뜻합니다. 기기에서의 동작이나 빌드 성공을 뜻하지 않습니다. 프로젝트 지침에 따라 Codex는 빌드와 테스트를 실행하지 않고 코드·리소스·매니페스트를 점검합니다. 2026-09-27에 전달된 빌드 로그의 `WEB_SEARCH` 컴파일 오류는 `Intent.ACTION_WEB_SEARCH`로 수정했습니다. 이후 전달된 Compose 미리보기 컴파일 로그의 `PageShortcuts.Result` 공개 범위 오류와 `ShortcutInfo.icon` 참조 오류도 수정했으며, 수정 후 빌드는 실행하지 않았습니다.
+최종 정리: 2026-09-27. 아래 `[x]`는 **코드에 기능이 연결됨**을 뜻합니다. 기기에서의 동작이나 빌드 성공을 뜻하지 않습니다. 프로젝트 지침에 따라 Codex는 빌드와 테스트를 실행하지 않고 코드·리소스·매니페스트를 점검합니다. 2026-09-27에 전달된 빌드 로그의 `WEB_SEARCH` 컴파일 오류는 `Intent.ACTION_WEB_SEARCH`로 수정했습니다. 이후 전달된 Compose 미리보기 컴파일 로그의 `PageShortcuts.Result` 공개 범위 오류, `ShortcutInfo.icon` 참조 오류, `WebAppActivity`의 `setPrompt` JVM 이름 충돌도 수정했으며, 수정 후 빌드는 실행하지 않았습니다.
 
 ### 기본 탐색과 탭
 
