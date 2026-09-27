@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="pdf_accent">#FFF7F7F7</color>
+    <color name="current_accent">#FFFF6A0D</color>
 </resources>

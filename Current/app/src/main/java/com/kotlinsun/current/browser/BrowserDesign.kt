@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkBorder
@@ -41,11 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -58,40 +53,33 @@ import com.kotlinsun.current.R
 @Composable
 internal fun CurrentBrandIcon(
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(12.dp),
+    shape: Shape = RoundedCornerShape(6.dp),
 ) {
     Image(
         painter = painterResource(R.drawable.current_icon_final),
         contentDescription = null,
-        modifier = modifier.shadow(4.dp, shape).clip(shape)
-            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shape),
+        modifier = modifier.clip(shape)
+            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shape),
     )
 }
 
 @Composable
-internal fun BrowserGlassSurface(
+internal fun BrowserInputSurface(
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(24.dp),
-    strong: Boolean = false,
+    shape: Shape = RoundedCornerShape(10.dp),
     focused: Boolean = false,
     error: Boolean = false,
     content: @Composable BoxScope.() -> Unit,
 ) {
-    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val top = if (dark) Color(0xFF282828).copy(alpha = 0.99f)
-        else Color.White.copy(alpha = 0.99f)
-    val bottom = if (dark) Color(0xFF1B1B1B).copy(alpha = if (strong) 0.99f else 0.97f)
-        else Color(0xFFF2F2F2).copy(alpha = if (strong) 0.99f else 0.97f)
     val stroke = when {
         error -> MaterialTheme.colorScheme.error
-        focused -> MaterialTheme.colorScheme.primary
-        dark -> Color.White.copy(alpha = 0.32f)
-        else -> MaterialTheme.colorScheme.outline
+        focused -> MaterialTheme.colorScheme.secondary
+        else -> MaterialTheme.colorScheme.outlineVariant
     }
-    Box(modifier.shadow(if (strong) 20.dp else 12.dp, shape)
+    Box(modifier
         .clip(shape)
-        .background(Brush.verticalGradient(listOf(top, bottom)), shape)
-        .border(BorderStroke(if (error) 2.dp else if (focused) 1.5.dp else 1.dp, stroke), shape),
+        .background(MaterialTheme.colorScheme.surfaceVariant, shape)
+        .border(BorderStroke(if (error || focused) 2.dp else 1.dp, stroke), shape),
         content = content)
 }
 
@@ -105,11 +93,11 @@ internal fun WelcomeScreen(onStart: () -> Unit) {
         Row(Modifier.fillMaxWidth().padding(top = 24.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {
-            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+            Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                 Row(Modifier.padding(start = 6.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    CurrentBrandIcon(Modifier.size(24.dp), RoundedCornerShape(8.dp))
+                    CurrentBrandIcon(Modifier.size(24.dp), MaterialTheme.shapes.small)
                     Text(stringResource(R.string.app_name), modifier = Modifier.padding(start = 8.dp),
                         style = MaterialTheme.typography.labelLarge)
                 }
@@ -128,9 +116,9 @@ internal fun WelcomeScreen(onStart: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         Spacer(Modifier.height(34.dp))
         Button(onClick = onStart, modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth().heightIn(min = 56.dp),
-            shape = CircleShape,
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary,
-                contentColor = MaterialTheme.colorScheme.onSecondary)) {
+            shape = MaterialTheme.shapes.medium,
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary)) {
             Text(stringResource(R.string.welcome_start), style = MaterialTheme.typography.labelLarge)
         }
         Spacer(Modifier.height(28.dp))
@@ -143,13 +131,13 @@ private fun WelcomeCollage() {
         .clearAndSetSemantics { }) {
         val cardWidth = maxWidth * 0.62f
         Box(Modifier.align(Alignment.Center).size(250.dp)
-            .background(MaterialTheme.colorScheme.primaryContainer, CircleShape))
+            .background(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.shapes.large))
         Surface(Modifier.align(Alignment.TopStart).offset(x = 5.dp, y = 30.dp)
-            .width(cardWidth).height(180.dp).rotate(-8f),
-            shape = RoundedCornerShape(24.dp),
+            .width(cardWidth).height(180.dp).rotate(-3f),
+            shape = MaterialTheme.shapes.large,
             color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 12.dp,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+            shadowElevation = 4.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
             Column(Modifier.padding(16.dp)) {
                 MiniAddress("current.app")
                 Spacer(Modifier.height(20.dp))
@@ -163,10 +151,10 @@ private fun WelcomeCollage() {
             }
         }
         Surface(Modifier.align(Alignment.TopEnd).offset(x = (-3).dp, y = 4.dp)
-            .width(cardWidth * 0.82f).height(177.dp).rotate(9f),
-            shape = RoundedCornerShape(24.dp),
+            .width(cardWidth * 0.82f).height(177.dp).rotate(3f),
+            shape = MaterialTheme.shapes.large,
             color = MaterialTheme.colorScheme.primary,
-            shadowElevation = 12.dp) {
+            shadowElevation = 4.dp) {
             Column(Modifier.padding(18.dp)) {
                 Icon(Icons.Filled.Search, contentDescription = null,
                     tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(34.dp))
@@ -175,23 +163,24 @@ private fun WelcomeCollage() {
                     style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(10.dp))
                 Box(Modifier.fillMaxWidth().height(28.dp)
-                    .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.22f), CircleShape))
+                    .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.22f),
+                        MaterialTheme.shapes.small))
                 Spacer(Modifier.height(7.dp))
                 Box(Modifier.fillMaxWidth(0.7f).height(10.dp)
-                    .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.22f), CircleShape))
+                    .background(MaterialTheme.colorScheme.secondary, MaterialTheme.shapes.small))
             }
         }
         Surface(Modifier.align(Alignment.BottomCenter).offset(y = (-8).dp)
-            .width(maxWidth * 0.81f).height(166.dp).rotate(-3f),
-            shape = RoundedCornerShape(26.dp),
+            .width(maxWidth * 0.81f).height(166.dp),
+            shape = MaterialTheme.shapes.large,
             color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 14.dp,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+            shadowElevation = 4.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
             Column(Modifier.padding(18.dp)) {
                 MiniAddress(stringResource(R.string.welcome_my_tabs))
                 Spacer(Modifier.height(18.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(Modifier.size(50.dp), shape = RoundedCornerShape(16.dp),
+                    Surface(Modifier.size(50.dp), shape = MaterialTheme.shapes.medium,
                         color = MaterialTheme.colorScheme.primaryContainer) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(Icons.Filled.BookmarkBorder, contentDescription = null,
@@ -207,7 +196,8 @@ private fun WelcomeCollage() {
                 }
                 Spacer(Modifier.height(14.dp))
                 Box(Modifier.fillMaxWidth().height(8.dp)
-                    .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape))
+                    .background(MaterialTheme.colorScheme.surfaceVariant,
+                        MaterialTheme.shapes.small))
             }
         }
     }
@@ -215,7 +205,8 @@ private fun WelcomeCollage() {
 
 @Composable
 private fun MiniAddress(label: String) {
-    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant) {
+    Surface(shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceVariant) {
         Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
             style = MaterialTheme.typography.bodySmall,
             maxLines = 1, overflow = TextOverflow.Ellipsis)

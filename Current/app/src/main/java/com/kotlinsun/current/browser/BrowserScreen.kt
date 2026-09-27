@@ -13,7 +13,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -73,7 +72,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
@@ -95,6 +93,10 @@ import com.kotlinsun.current.data.BookmarkRecord
 import com.kotlinsun.current.R
 import com.kotlinsun.current.engine.JavaScriptDialogKind
 import com.kotlinsun.current.engine.TabMode
+import com.kotlinsun.current.ui.theme.currentSuccessColor
+import com.kotlinsun.current.ui.theme.currentWarningColor
+import com.kotlinsun.current.ui.theme.currentAccentTextColor
+import com.kotlinsun.current.ui.theme.currentErrorTextColor
 import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
@@ -196,7 +198,7 @@ fun BrowserScreen(controller: BrowserController) {
     ui.dialog?.let { BrowserDialogView(it, controller) }
     ui.linkTarget?.let { target ->
         AlertDialog(onDismissRequest = controller::dismissLinkMenu,
-            shape = RoundedCornerShape(28.dp),
+            shape = MaterialTheme.shapes.large,
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
             title = { Text(stringResource(if (target.imageUrl != null)
@@ -235,12 +237,13 @@ fun BrowserScreen(controller: BrowserController) {
     }
     ui.pendingExternalUrl?.let { url ->
         AlertDialog(onDismissRequest = controller::dismissExternal,
-            shape = RoundedCornerShape(28.dp),
+            shape = MaterialTheme.shapes.large,
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
             title = { Text(stringResource(R.string.open_external_app)) },
             text = { Text(url, maxLines = 6, overflow = TextOverflow.Ellipsis) },
-            confirmButton = { TextButton(onClick = controller::confirmExternal,
+            confirmButton = { Button(onClick = controller::confirmExternal,
+                shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.open)) } },
             dismissButton = { TextButton(onClick = controller::dismissExternal,
                 modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.cancel)) } })
@@ -267,7 +270,7 @@ fun BrowserScreen(controller: BrowserController) {
                                 if (ui.activeMode == TabMode.PRIVATE) {
                                     Icon(Icons.Filled.Lock, contentDescription = null,
                                         modifier = Modifier.size(28.dp))
-                                } else CurrentBrandIcon(Modifier.size(28.dp), RoundedCornerShape(6.dp))
+                                } else CurrentBrandIcon(Modifier.size(28.dp), MaterialTheme.shapes.medium)
                                 Text(stringResource(if (ui.activeMode == TabMode.PRIVATE)
                                     R.string.private_tab else R.string.app_name),
                                     modifier = Modifier.weight(1f).padding(start = 10.dp),
@@ -300,7 +303,9 @@ fun BrowserScreen(controller: BrowserController) {
                     if (ui.findVisible && selected?.url != null) BrowserFindBar(ui, controller)
                     if (selected?.engine?.isLoading == true) LinearProgressIndicator(
                         progress = { selected.engine.progress / 100f },
-                        modifier = Modifier.fillMaxWidth().height(2.dp))
+                        modifier = Modifier.fillMaxWidth().height(2.dp),
+                        color = MaterialTheme.colorScheme.secondary,
+                        trackColor = MaterialTheme.colorScheme.outlineVariant)
                 } else {
                     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp,
                         top = 12.dp, bottom = 16.dp),
@@ -316,7 +321,7 @@ fun BrowserScreen(controller: BrowserController) {
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
         },
         bottomBar = {
@@ -366,7 +371,7 @@ fun BrowserScreen(controller: BrowserController) {
                             Column(Modifier.fillMaxSize().padding(24.dp),
                                 verticalArrangement = Arrangement.Center,
                                 horizontalAlignment = Alignment.CenterHorizontally) {
-                                Surface(shape = RoundedCornerShape(22.dp),
+                                Surface(shape = MaterialTheme.shapes.large,
                                     color = MaterialTheme.colorScheme.primaryContainer) {
                                     Icon(Icons.Filled.Language, contentDescription = null,
                                         modifier = Modifier.padding(18.dp).size(32.dp),
@@ -379,7 +384,8 @@ fun BrowserScreen(controller: BrowserController) {
                                 Text(error.message, textAlign = TextAlign.Center,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(Modifier.height(16.dp))
-                                Button(onClick = controller::reloadOrStop, shape = CircleShape,
+                                Button(onClick = controller::reloadOrStop,
+                                    shape = MaterialTheme.shapes.medium,
                                     modifier = Modifier.heightIn(min = 48.dp)) {
                                     Text(stringResource(R.string.startup_retry))
                                 }
@@ -425,14 +431,14 @@ private fun NewTabPage(
         horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(if (compactHeight) 12.dp else 40.dp))
         if (ui.activeMode == TabMode.PRIVATE) {
-            Surface(Modifier.size(68.dp), shape = RoundedCornerShape(24.dp),
+            Surface(Modifier.size(68.dp), shape = MaterialTheme.shapes.large,
                 color = MaterialTheme.colorScheme.primaryContainer) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(32.dp),
                         tint = MaterialTheme.colorScheme.primary)
                 }
             }
-        } else CurrentBrandIcon(Modifier.size(68.dp), RoundedCornerShape(24.dp))
+        } else CurrentBrandIcon(Modifier.size(68.dp), MaterialTheme.shapes.large)
         Spacer(Modifier.height(if (compactHeight) 12.dp else 24.dp))
         Text(stringResource(if (ui.activeMode == TabMode.PRIVATE)
             R.string.private_intro_title else R.string.new_tab_title),
@@ -460,16 +466,16 @@ private fun NewTabPage(
                                 contentDescription = context.getString(R.string.quick_link_open,
                                     context.getString(link.sourceRes), link.title, link.url)
                             },
-                            shape = RoundedCornerShape(20.dp),
+                            shape = MaterialTheme.shapes.large,
                             color = MaterialTheme.colorScheme.surface,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                             Column(Modifier.padding(14.dp)) {
-                                Surface(shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primaryContainer) {
+                                Surface(shape = MaterialTheme.shapes.medium,
+                                    color = MaterialTheme.colorScheme.secondaryContainer) {
                                     Text(stringResource(link.sourceRes),
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.primary,
+                                        color = currentAccentTextColor(),
                                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                                 Spacer(Modifier.height(7.dp))
@@ -492,27 +498,27 @@ private fun BrowserPanel(
     modifier: Modifier = Modifier,
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
 ) {
-    Surface(modifier = modifier, shape = RoundedCornerShape(22.dp),
+    Surface(modifier = modifier, shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
-        Column(Modifier.padding(18.dp), content = content)
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Column(Modifier.padding(20.dp), content = content)
     }
 }
 
 @Composable
 private fun ChoicePill(label: String, selected: Boolean, onClick: () -> Unit,
-    modifier: Modifier = Modifier, enabled: Boolean = true) {
+    modifier: Modifier = Modifier, enabled: Boolean = true, pill: Boolean = false) {
     val state = stringResource(if (selected) R.string.selected else R.string.not_selected)
     Surface(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = 48.dp)
         .semantics { stateDescription = state },
-        shape = CircleShape,
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer else
-            MaterialTheme.colorScheme.background,
+        shape = if (pill) CircleShape else MaterialTheme.shapes.medium,
+        color = if (selected) MaterialTheme.colorScheme.primary else
+            MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else
             MaterialTheme.colorScheme.outline)) {
         Box(Modifier.padding(horizontal = 10.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
             Text(label, style = MaterialTheme.typography.labelLarge,
-                color = if (selected) MaterialTheme.colorScheme.primary else
+                color = if (selected) MaterialTheme.colorScheme.onPrimary else
                     MaterialTheme.colorScheme.onSurface,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -541,7 +547,7 @@ private fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
                         contextSelected else contextNotSelected },
                     verticalAlignment = Alignment.CenterVertically) {
                     Text(engine.label, modifier = Modifier.weight(1f))
-                    if (ui.searchEngine == engine) Text("✓", color = MaterialTheme.colorScheme.primary)
+                    if (ui.searchEngine == engine) Text("✓", color = currentAccentTextColor())
                 }
             }
         }
@@ -633,11 +639,11 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
             ChoicePill(stringResource(R.string.normal_tab_label,
                 ui.tabs.count { it.mode == TabMode.NORMAL }),
                 ui.activeMode == TabMode.NORMAL, { controller.switchMode(TabMode.NORMAL) },
-                modifier = Modifier.weight(1f))
+                modifier = Modifier.weight(1f), pill = true)
             ChoicePill(stringResource(R.string.private_tab_label,
                 ui.tabs.count { it.mode == TabMode.PRIVATE }),
                 ui.activeMode == TabMode.PRIVATE, { controller.switchMode(TabMode.PRIVATE) },
-                modifier = Modifier.weight(1f), enabled = ui.privateAvailable)
+                modifier = Modifier.weight(1f), enabled = ui.privateAvailable, pill = true)
         }
         ui.privateUnavailableReason?.let {
             Text(it, modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
@@ -647,7 +653,7 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
         OutlinedTextField(query, { query = it },
             placeholder = { Text(stringResource(R.string.tab_search)) },
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-            singleLine = true, shape = CircleShape,
+            singleLine = true, shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
                 .semantics { contentDescription = context.getString(R.string.tab_search) })
         val tabActions: @Composable (Modifier, Modifier) -> Unit = { closeModifier, newModifier ->
@@ -692,9 +698,9 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                         BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
                     }.getOrNull() }
                 }
-                Surface(shape = RoundedCornerShape(22.dp),
+                Surface(shape = MaterialTheme.shapes.large,
                     color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                     Column(Modifier.fillMaxWidth().padding(10.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Row(Modifier.weight(1f).heightIn(min = 80.dp)
@@ -707,10 +713,10 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                             verticalAlignment = Alignment.CenterVertically) {
                             if (image != null) Image(image, contentDescription = null,
                                 modifier = Modifier.size(previewWidth, previewHeight)
-                                    .clip(RoundedCornerShape(15.dp)))
+                                    .clip(MaterialTheme.shapes.medium))
                             else Box(Modifier.size(previewWidth, previewHeight)
                                 .background(MaterialTheme.colorScheme.primaryContainer,
-                                    RoundedCornerShape(15.dp)), contentAlignment = Alignment.Center) {
+                                    MaterialTheme.shapes.medium), contentAlignment = Alignment.Center) {
                                 Icon(if (tab.mode == TabMode.PRIVATE) Icons.Filled.Lock else
                                     Icons.Filled.Language, contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary)
@@ -764,9 +770,9 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                 items(ui.closedTabs.filter { it.url != null }, key = { "closed-" + it.id }) { closed ->
                     Surface(onClick = { controller.reopenClosedTab(closed.id) },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 58.dp),
-                        shape = RoundedCornerShape(18.dp),
+                        shape = MaterialTheme.shapes.large,
                         color = MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                         Box(Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                             contentAlignment = Alignment.CenterStart) {
                             Text(closed.title.ifBlank { closed.url.orEmpty() }, maxLines = 1)
@@ -789,7 +795,7 @@ private fun HistoryScreen(ui: BrowserUiState, controller: BrowserController) {
         OutlinedTextField(query, { query = it },
             placeholder = { Text(stringResource(R.string.search_history)) },
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-            singleLine = true, shape = CircleShape,
+            singleLine = true, shape = MaterialTheme.shapes.medium,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = MaterialTheme.colorScheme.surface,
                 unfocusedContainerColor = MaterialTheme.colorScheme.surface),
@@ -820,13 +826,13 @@ private fun HistoryScreen(ui: BrowserUiState, controller: BrowserController) {
                             BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
                         }.getOrNull() }
                     }
-                    Surface(shape = RoundedCornerShape(20.dp),
+                    Surface(shape = MaterialTheme.shapes.large,
                         color = MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically) {
                             if (favicon != null) Image(favicon, contentDescription = null,
-                                modifier = Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)))
+                                modifier = Modifier.size(28.dp).clip(MaterialTheme.shapes.small))
                             else Icon(Icons.Filled.Language, contentDescription = null,
                                 modifier = Modifier.size(28.dp), tint = MaterialTheme.colorScheme.primary)
                             Column(Modifier.weight(1f).heightIn(min = 56.dp)
@@ -863,14 +869,17 @@ private fun BookmarkScreen(ui: BrowserUiState, controller: BrowserController) {
     var url by remember { mutableStateOf("") }
     ui.bookmarkImportPreview?.let { preview ->
         AlertDialog(onDismissRequest = controller::cancelBookmarkImport,
+            shape = MaterialTheme.shapes.large,
+            containerColor = MaterialTheme.colorScheme.surface,
             title = { Text(stringResource(R.string.bookmark_import_preview)) },
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.bookmark_import_counts, preview.total,
                     preview.newCount, preview.duplicateCount))
                 preview.sample.forEach { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             } },
-            confirmButton = { TextButton(onClick = controller::confirmBookmarkImport,
+            confirmButton = { Button(onClick = controller::confirmBookmarkImport,
                 enabled = preview.newCount > 0,
+                shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.heightIn(min = 48.dp)) {
                 Text(stringResource(R.string.bookmark_import))
             } },
@@ -881,22 +890,23 @@ private fun BookmarkScreen(ui: BrowserUiState, controller: BrowserController) {
     }
     editing?.let { item ->
         AlertDialog(onDismissRequest = { editing = null },
-            shape = RoundedCornerShape(28.dp),
+            shape = MaterialTheme.shapes.large,
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
             title = { Text(stringResource(R.string.edit_bookmark)) },
             text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(title, { title = it },
                     label = { Text(stringResource(R.string.title)) },
-                    modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp))
+                    modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large)
                 OutlinedTextField(url, { url = it },
                     label = { Text(stringResource(R.string.address)) },
-                    modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp))
+                    modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large)
             } },
-            confirmButton = { TextButton(onClick = {
+            confirmButton = { Button(onClick = {
                 controller.updateBookmark(item.id, title, url)
                 editing = null
-            }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.save)) } },
+            }, shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.save)) } },
             dismissButton = { TextButton(onClick = { editing = null },
                 modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.cancel)) } })
     }
@@ -921,9 +931,9 @@ private fun BookmarkScreen(ui: BrowserUiState, controller: BrowserController) {
             }
         }
         items(ui.bookmarks, key = { it.id }) { bookmark ->
-            Surface(shape = RoundedCornerShape(20.dp),
+            Surface(shape = MaterialTheme.shapes.large,
                 color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.BookmarkBorder, contentDescription = null,
@@ -1007,7 +1017,7 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
     OutlinedTextField(query, { query = it },
         placeholder = { Text(stringResource(R.string.download_search)) },
         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-        singleLine = true, shape = CircleShape,
+        singleLine = true, shape = MaterialTheme.shapes.medium,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
             .semantics { contentDescription = context.getString(R.string.download_search) })
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
@@ -1021,7 +1031,7 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         ui.downloadError?.let { error -> item {
             BrowserPanel(Modifier.fillMaxWidth()) {
-                Text(error, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(error, color = currentErrorTextColor())
                 TextButton(onClick = controller::refreshDownloads,
                     modifier = Modifier.heightIn(min = 48.dp)) {
                     Text(stringResource(R.string.download_retry))
@@ -1061,7 +1071,15 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
                 val progress = if (item.totalBytes > 0)
                     (item.downloadedBytes.toFloat() / item.totalBytes).coerceIn(0f, 1f) else null
                 Text(label + (progress?.let { " · ${(it * 100).toInt()}%" } ?: ""),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = when (item.status) {
+                        DownloadManager.STATUS_SUCCESSFUL -> currentSuccessColor()
+                        DownloadManager.STATUS_FAILED, DOWNLOAD_STATUS_MISSING ->
+                            currentErrorTextColor()
+                        DownloadManager.STATUS_PAUSED -> currentWarningColor()
+                        DownloadManager.STATUS_PENDING, DownloadManager.STATUS_RUNNING ->
+                            currentAccentTextColor()
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     style = MaterialTheme.typography.bodySmall)
                 if (item.status == DownloadManager.STATUS_FAILED || item.status == DOWNLOAD_STATUS_MISSING) {
                     Text(downloadRetryGuidance(item), style = MaterialTheme.typography.bodySmall,
@@ -1077,7 +1095,9 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
                 }
                 if (progress != null && item.status == DownloadManager.STATUS_RUNNING) {
                     Spacer(Modifier.height(10.dp))
-                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.secondary,
+                        trackColor = MaterialTheme.colorScheme.outlineVariant)
                 }
                 DownloadActionContainer(compactActions) {
                     if (item.status == DownloadManager.STATUS_FAILED || item.status == DOWNLOAD_STATUS_MISSING) {
@@ -1219,9 +1239,9 @@ private fun PrivacyScreen(controller: BrowserController) {
                     pair.forEach { range ->
                         Surface(onClick = { controller.deleteHistory(range) },
                             modifier = Modifier.weight(1f).heightIn(min = 52.dp),
-                            shape = RoundedCornerShape(16.dp),
+                            shape = MaterialTheme.shapes.medium,
                             color = MaterialTheme.colorScheme.background,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                             Box(contentAlignment = Alignment.Center) {
                                 Text(stringResource(range.labelRes), style = MaterialTheme.typography.labelLarge)
                             }
@@ -1240,7 +1260,8 @@ private fun PrivacyScreen(controller: BrowserController) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(18.dp))
             Button(onClick = controller::requestClearSiteData,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = CircleShape) {
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                shape = MaterialTheme.shapes.medium) {
                 Text(stringResource(R.string.clear_all_site_data))
             }
         }
@@ -1258,7 +1279,8 @@ private fun SiteInfoScreen(ui: BrowserUiState) {
             Spacer(Modifier.height(12.dp))
             Text(stringResource(if (info?.url?.startsWith("https://") == true)
                 R.string.https_address else R.string.http_other_address),
-                color = MaterialTheme.colorScheme.primary)
+                color = if (info?.url?.startsWith("https://") == true)
+                    currentSuccessColor() else currentErrorTextColor())
             Spacer(Modifier.height(6.dp))
             Text(stringResource(R.string.site_security_limited),
                 style = MaterialTheme.typography.bodySmall,
@@ -1319,7 +1341,7 @@ private fun BrowserDialogView(dialog: BrowserDialog, controller: BrowserControll
         BrowserDialog.ClearSiteData -> stringResource(R.string.dialog_site_data)
     }
     AlertDialog(onDismissRequest = controller::cancelDialog,
-        shape = RoundedCornerShape(28.dp),
+        shape = MaterialTheme.shapes.large,
         containerColor = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp,
         title = { Text(title) },
@@ -1331,7 +1353,7 @@ private fun BrowserDialogView(dialog: BrowserDialog, controller: BrowserControll
                     if (dialog.kind == JavaScriptDialogKind.PROMPT) OutlinedTextField(
                         prompt, { prompt = it },
                         label = { Text(stringResource(R.string.dialog_response)) },
-                        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp))
+                        modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large)
                 }
                 is BrowserDialog.Permission -> Text(stringResource(R.string.permission_request,
                     dialog.origin, dialog.kinds.joinToString { permissionNames[it].orEmpty() }))
@@ -1347,10 +1369,11 @@ private fun BrowserDialogView(dialog: BrowserDialog, controller: BrowserControll
                 BrowserDialog.ClearSiteData -> Text(stringResource(R.string.clear_site_data_notice))
             }
         },
-        confirmButton = { TextButton(onClick = {
+        confirmButton = { Button(onClick = {
             controller.confirmDialog(if (dialog is BrowserDialog.JavaScript &&
                 dialog.kind == JavaScriptDialogKind.PROMPT) prompt else null)
-        }, modifier = Modifier.heightIn(min = 48.dp)) { Text(when (dialog) {
+        }, shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.heightIn(min = 48.dp)) { Text(when (dialog) {
             is BrowserDialog.Notice -> stringResource(R.string.dialog_confirm)
             is BrowserDialog.Permission -> stringResource(R.string.dialog_allow)
             is BrowserDialog.Download -> stringResource(R.string.downloads)

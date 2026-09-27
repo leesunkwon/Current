@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -42,6 +41,8 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupProperties
 import com.kotlinsun.current.R
+import com.kotlinsun.current.ui.theme.currentAccentTextColor
+import com.kotlinsun.current.ui.theme.currentPlaceholderColor
 
 @Composable
 internal fun BrowserAddressField(
@@ -60,7 +61,7 @@ internal fun BrowserAddressField(
 ) {
     val isHome = ui.selectedTab?.url == null
     val inputDescription = stringResource(R.string.address_input_description)
-    val fieldShape = if (flat) RoundedCornerShape(16.dp) else CircleShape
+    val fieldShape = if (flat) RoundedCornerShape(8.dp) else RoundedCornerShape(10.dp)
     val addressInput: @Composable () -> Unit = {
         OutlinedTextField(
             value = value,
@@ -69,7 +70,8 @@ internal fun BrowserAddressField(
                 .semantics { contentDescription = inputDescription },
             singleLine = true,
             isError = isError,
-            placeholder = { Text(stringResource(R.string.address_or_search)) },
+            placeholder = { Text(stringResource(R.string.address_or_search),
+                color = currentPlaceholderColor()) },
             leadingIcon = {
                 Icon(if (isError) Icons.Filled.ErrorOutline else if (isHome || editing) Icons.Filled.Search else if (
                     ui.selectedTab?.url?.startsWith("https://", true) == true) Icons.Filled.Lock
@@ -85,7 +87,8 @@ internal fun BrowserAddressField(
                             contentDescription = stringResource(R.string.address_submit),
                             modifier = Modifier.size(22.dp))
                     } else {
-                        Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
+                        Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.primary,
+                            MaterialTheme.shapes.medium),
                             contentAlignment = Alignment.Center) {
                             Icon(Icons.AutoMirrored.Filled.ArrowForward,
                                 contentDescription = stringResource(R.string.address_submit),
@@ -112,15 +115,15 @@ internal fun BrowserAddressField(
         if (flat) {
             val stroke = when {
                 isError -> MaterialTheme.colorScheme.error
-                editing -> MaterialTheme.colorScheme.primary
-                else -> MaterialTheme.colorScheme.outline
+                editing -> MaterialTheme.colorScheme.secondary
+                else -> MaterialTheme.colorScheme.outlineVariant
             }
             Surface(Modifier.fillMaxWidth(), shape = fieldShape,
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                color = MaterialTheme.colorScheme.surfaceVariant,
                 border = BorderStroke(if (isError) 2.dp else if (editing) 1.5.dp else 1.dp, stroke),
-                tonalElevation = 0.dp, shadowElevation = 2.dp) { addressInput() }
+                tonalElevation = 0.dp) { addressInput() }
         } else {
-            BrowserGlassSurface(Modifier.fillMaxWidth(), shape = fieldShape,
+            BrowserInputSurface(Modifier.fillMaxWidth(), shape = fieldShape,
                 focused = editing, error = isError) { addressInput() }
         }
         DropdownMenu(expanded = editing && suggestionsVisible && ui.suggestions.isNotEmpty(),
@@ -129,11 +132,11 @@ internal fun BrowserAddressField(
             modifier = Modifier.widthIn(max = 360.dp).heightIn(max =
                 if (LocalConfiguration.current.screenHeightDp < 480) 180.dp else 320.dp),
             properties = PopupProperties(focusable = false),
-            shape = if (flat) RoundedCornerShape(16.dp) else RoundedCornerShape(24.dp),
+            shape = MaterialTheme.shapes.medium,
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
-            shadowElevation = 16.dp,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+            shadowElevation = 4.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
             ui.suggestions.forEach { suggestion ->
                 val suggestionDescription = stringResource(R.string.suggestion_description,
                     stringResource(suggestion.sourceRes), suggestion.title, suggestion.url)
@@ -142,7 +145,7 @@ internal fun BrowserAddressField(
                         Column {
                             Text(suggestion.title, maxLines = 1)
                             Text(stringResource(suggestion.sourceRes), style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary)
+                                color = currentAccentTextColor())
                             Text(suggestion.url, style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                         }

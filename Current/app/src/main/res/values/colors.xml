@@ -2,5 +2,5 @@
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
-    <color name="pdf_accent">#FF111111</color>
+    <color name="current_accent">#FFFF6A0D</color>
 </resources>

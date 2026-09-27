@@ -56,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -73,6 +74,7 @@ import androidx.compose.ui.window.PopupProperties
 import com.kotlinsun.current.engine.TabMode
 import com.kotlinsun.current.R
 import com.kotlinsun.current.ui.theme.BrowserNavigation
+import com.kotlinsun.current.ui.theme.currentAccentTextColor
 
 @Composable
 internal fun BrowserMenu(
@@ -105,16 +107,16 @@ internal fun BrowserMenu(
             Box(Modifier.padding(10.dp)) {
                 Surface(Modifier.width(menuWidth).heightIn(max = menuHeight)
                     .semantics { paneTitle = menuTitle },
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.large,
                     color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    shadowElevation = 12.dp,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    shadowElevation = 4.dp,
                     tonalElevation = 0.dp) {
                     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(14.dp)) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f).padding(start = 8.dp)) {
                                 Text(stringResource(R.string.browser_brand_label), style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary)
+                                    color = currentAccentTextColor())
                                 Text(menuTitle, style = MaterialTheme.typography.titleMedium)
                             }
                             IconButton(onClick = { onExpandedChange(false) }, modifier = Modifier.size(48.dp)) {
@@ -254,12 +256,12 @@ private fun BrowserMenuSection(title: String) {
 
 @Composable
 private fun BrowserMenuItem(label: String, icon: ImageVector, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 54.dp).clip(RoundedCornerShape(8.dp))
+    Row(Modifier.fillMaxWidth().heightIn(min = 54.dp).clip(MaterialTheme.shapes.medium)
         .clickable(onClickLabel = label, onClick = onClick)
         .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(38.dp).background(MaterialTheme.colorScheme.primaryContainer,
-            RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+            MaterialTheme.shapes.small), contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colorScheme.primary)
         }
@@ -275,6 +277,7 @@ internal fun BrowserBottomBar(ui: BrowserUiState, controller: BrowserController)
     val selected = ui.selectedTab
     val compact = LocalConfiguration.current.screenWidthDp < 320
     val horizontalPadding = if (compact) 8.dp else 16.dp
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val tabCountDescription = stringResource(if (ui.activeMode == TabMode.PRIVATE)
         R.string.private_tab_count else R.string.normal_tab_count, ui.visibleTabs.size)
     Box(Modifier.fillMaxWidth().navigationBarsPadding()
@@ -282,10 +285,13 @@ internal fun BrowserBottomBar(ui: BrowserUiState, controller: BrowserController)
             end = horizontalPadding, bottom = 12.dp),
         contentAlignment = Alignment.Center) {
         Surface(shape = CircleShape,
-            color = if (ui.activeMode == TabMode.PRIVATE) Color(0xFF363636) else BrowserNavigation,
+            color = if (dark) MaterialTheme.colorScheme.surfaceContainer
+                else if (ui.activeMode == TabMode.PRIVATE) Color(0xFF2E2E2E)
+                else BrowserNavigation,
             contentColor = Color.White,
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
-            shadowElevation = 16.dp) {
+            border = BorderStroke(1.dp, if (dark) MaterialTheme.colorScheme.outline
+                else Color.White.copy(alpha = 0.2f)),
+            shadowElevation = 4.dp) {
             Row(Modifier.horizontalScroll(rememberScrollState())
                 .padding(if (compact) 6.dp else 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 6.dp),

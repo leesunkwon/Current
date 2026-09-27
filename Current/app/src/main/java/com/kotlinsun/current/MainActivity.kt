@@ -16,6 +16,7 @@ import android.content.Context
 import android.content.ClipData
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
@@ -232,7 +233,9 @@ class MainActivity : ComponentActivity(), BrowserHost {
         val hasImage = accepted.any { it.startsWith("image/") }
         val hasVideo = accepted.any { it.startsWith("video/") }
         if (allowCamera && hasImage && hasVideo) {
-            fileChoiceDialog = android.app.AlertDialog.Builder(this)
+            val dialogTheme = if (isCurrentThemeDark()) R.style.Theme_Current_UploadDialog_Dark
+                else R.style.Theme_Current_UploadDialog_Light
+            fileChoiceDialog = android.app.AlertDialog.Builder(this, dialogTheme)
                 .setTitle(R.string.upload_method)
                 .setItems(R.array.upload_methods) { _, choice ->
                     fileChoiceDialog = null
@@ -403,11 +406,19 @@ class MainActivity : ComponentActivity(), BrowserHost {
             runCatching {
                 startActivity(Intent(this, PdfActivity::class.java).setDataAndType(uri, "application/pdf")
                     .putExtra(PdfActivity.EXTRA_PRIVATE, privateMode)
+                    .putExtra(PdfActivity.EXTRA_DARK, isCurrentThemeDark())
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
             }.onFailure { openWithExternalApp(uri, "application/pdf") }
             return
         }
         openWithExternalApp(uri, mimeType ?: "*/*")
+    }
+
+    private fun isCurrentThemeDark(): Boolean = when (controller.ui.value.themeChoice) {
+        ThemeChoice.LIGHT -> false
+        ThemeChoice.DARK -> true
+        ThemeChoice.SYSTEM -> resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
     }
 
     private fun openWithExternalApp(uri: Uri, mimeType: String) {
