@@ -219,8 +219,8 @@ class MainActivity : ComponentActivity(), BrowserHost {
         val hasVideo = accepted.any { it.startsWith("video/") }
         if (allowCamera && hasImage && hasVideo) {
             fileChoiceDialog = android.app.AlertDialog.Builder(this)
-                .setTitle("업로드 방식")
-                .setItems(arrayOf("파일 선택", "사진 촬영", "동영상 촬영")) { _, choice ->
+                .setTitle(R.string.upload_method)
+                .setItems(R.array.upload_methods) { _, choice ->
                     fileChoiceDialog = null
                     val intent = when (choice) {
                         1 -> runCatching { createCameraIntent(arrayOf("image/*")) }.getOrNull()
@@ -235,7 +235,7 @@ class MainActivity : ComponentActivity(), BrowserHost {
             return
         }
         val camera = if (allowCamera) runCatching { createCameraIntent(accepted) }.getOrNull() else null
-        val chooser = Intent.createChooser(picker, "파일 선택")
+        val chooser = Intent.createChooser(picker, getString(R.string.choose_file))
         if (camera != null) chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(camera))
         val target = if (request.capture && camera != null) camera else chooser
         launchFileIntent(request, target)
@@ -273,7 +273,8 @@ class MainActivity : ComponentActivity(), BrowserHost {
         cameraUri = uri
         return Intent(if (image) MediaStore.ACTION_IMAGE_CAPTURE else MediaStore.ACTION_VIDEO_CAPTURE).apply {
             putExtra(MediaStore.EXTRA_OUTPUT, uri)
-            clipData = android.content.ClipData.newUri(contentResolver, "촬영 파일", uri)
+            clipData = android.content.ClipData.newUri(contentResolver,
+                getString(R.string.capture_file), uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         }
     }
@@ -307,27 +308,24 @@ class MainActivity : ComponentActivity(), BrowserHost {
 
     override fun share(url: String) {
         val intent = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, url)
-        startActivity(Intent.createChooser(intent, "링크 공유"))
+        startActivity(Intent.createChooser(intent, getString(R.string.share_link_title)))
     }
 
     override fun openDownload(id: Long) {
         val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val uri = manager.getUriForDownloadedFile(id) ?: run {
-            Toast.makeText(this, "다운로드 파일을 찾을 수 없습니다.", Toast.LENGTH_SHORT).show()
+        val uri = runCatching { manager.getUriForDownloadedFile(id) }.getOrNull() ?: run {
+            Toast.makeText(this, R.string.download_file_not_found, Toast.LENGTH_SHORT).show()
             return
         }
-        val mime = manager.getMimeTypeForDownloadedFile(id) ?: "*/*"
-        runCatching {
-            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-        }.onFailure { Toast.makeText(this, "파일을 열 앱이 없습니다.", Toast.LENGTH_SHORT).show() }
+        val mime = runCatching { manager.getMimeTypeForDownloadedFile(id) }.getOrNull() ?: "*/*"
+        openWithExternalApp(uri, mime)
     }
 
     override fun openPdf(id: Long, privateMode: Boolean) {
         val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val uri = manager.getUriForDownloadedFile(id)
+        val uri = runCatching { manager.getUriForDownloadedFile(id) }.getOrNull()
         if (uri == null) {
-            Toast.makeText(this, "PDF 파일을 찾을 수 없습니다.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, R.string.pdf_file_not_found, Toast.LENGTH_SHORT).show()
             return
         }
         openLocalFile(uri, "application/pdf", privateMode)
@@ -335,22 +333,28 @@ class MainActivity : ComponentActivity(), BrowserHost {
 
     override fun openLocalFile(uri: Uri, mimeType: String?, privateMode: Boolean) {
         if (mimeType?.substringBefore(';')?.equals("application/pdf", true) == true) {
-            startActivity(Intent(this, PdfActivity::class.java).setDataAndType(uri, "application/pdf")
-                .putExtra(PdfActivity.EXTRA_PRIVATE, privateMode)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            runCatching {
+                startActivity(Intent(this, PdfActivity::class.java).setDataAndType(uri, "application/pdf")
+                    .putExtra(PdfActivity.EXTRA_PRIVATE, privateMode)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            }.onFailure { openWithExternalApp(uri, "application/pdf") }
             return
         }
+        openWithExternalApp(uri, mimeType ?: "*/*")
+    }
+
+    private fun openWithExternalApp(uri: Uri, mimeType: String) {
         runCatching {
-            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mimeType ?: "*/*")
+            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mimeType)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-        }.onFailure { Toast.makeText(this, "파일을 열 앱이 없습니다.", Toast.LENGTH_SHORT).show() }
+        }.onFailure { Toast.makeText(this, R.string.file_open_app_missing, Toast.LENGTH_SHORT).show() }
     }
 
     override fun print(adapter: PrintDocumentAdapter, jobName: String) {
         runCatching {
             (getSystemService(Context.PRINT_SERVICE) as PrintManager)
                 .print(jobName, adapter, PrintAttributes.Builder().build())
-        }.onFailure { Toast.makeText(this, "인쇄를 시작할 수 없습니다.", Toast.LENGTH_SHORT).show() }
+        }.onFailure { Toast.makeText(this, R.string.print_start_error, Toast.LENGTH_SHORT).show() }
     }
 
     override fun isDefaultBrowser(): Boolean? =
@@ -380,16 +384,20 @@ class MainActivity : ComponentActivity(), BrowserHost {
     override fun openExternal(url: String) {
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
         val scheme = uri.scheme?.lowercase() ?: return
-        if (scheme in setOf("http", "https", "file", "content", "javascript", "data", "blob")) return
+        if (scheme in setOf("http", "https", "file", "content", "javascript", "data", "blob", "about")) return
         val fallback: String?
         val external = if (scheme == "intent") {
             val parsed = runCatching { Intent.parseUri(url, Intent.URI_INTENT_SCHEME) }.getOrNull() ?: return
             if (parsed.`package` == packageName) return
             fallback = parsed.getStringExtra("browser_fallback_url")?.takeIf(::isWebUrl)
             val dataScheme = parsed.data?.scheme?.lowercase()
-            if (dataScheme in setOf("file", "content", "javascript", "data", "blob")) return
-            parsed.removeExtra("browser_fallback_url")
-            parsed
+            if (dataScheme == null || dataScheme in setOf("file", "content", "javascript",
+                    "data", "blob", "about", "intent") ||
+                (dataScheme in setOf("http", "https") && parsed.`package`.isNullOrBlank())) {
+                fallback?.let(controller::openUrlFromIntent)
+                return
+            }
+            Intent(Intent.ACTION_VIEW, parsed.data).apply { `package` = parsed.`package` }
         } else {
             fallback = null
             Intent(Intent.ACTION_VIEW, uri)

@@ -8,10 +8,13 @@ import kotlinx.coroutines.flow.StateFlow
 
 enum class TabMode { NORMAL, PRIVATE }
 
+const val BLOB_TRANSFER_CANCELLED = "blob_cancelled"
+
 data class SessionConfig(
     val profileName: String? = null,
     val allowThirdPartyCookies: Boolean = false,
     val textZoom: Int = 100,
+    val desktopMode: Boolean = false,
 )
 
 interface BlobTransfer {
@@ -101,6 +104,10 @@ interface EngineSession {
     fun pause()
     fun resume()
     fun applySettings(allowThirdPartyCookies: Boolean, textZoom: Int)
+    fun setDesktopMode(enabled: Boolean)
+    fun find(text: String)
+    fun findNext(forward: Boolean)
+    fun clearFind()
     fun createPrintAdapter(jobName: String): PrintDocumentAdapter?
     fun blobUnavailableReason(url: String): String?
     fun downloadBlob(url: String, maxBytes: Long, receiver: BlobReceiver): BlobTransfer?
@@ -118,6 +125,7 @@ interface PopupRequest {
 
 interface EngineCallbacks {
     fun onNavigationStarted(sessionId: String)
+    fun onFindResult(sessionId: String, activeIndex: Int, total: Int)
     fun onPageFinished(sessionId: String)
     fun onVisited(sessionId: String, url: String, isReload: Boolean)
     fun onFavicon(sessionId: String, url: String, icon: ByteArray)

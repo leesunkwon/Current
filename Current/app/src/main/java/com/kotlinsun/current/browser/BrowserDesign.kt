@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -59,9 +60,8 @@ internal fun CurrentBrandIcon(
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(12.dp),
 ) {
-    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     Image(
-        painter = painterResource(if (dark) R.drawable.current_icon_dark else R.drawable.current_icon_light),
+        painter = painterResource(R.drawable.current_icon_final),
         contentDescription = null,
         modifier = modifier.shadow(4.dp, shape).clip(shape)
             .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline), shape),
@@ -110,20 +110,20 @@ internal fun WelcomeScreen(onStart: () -> Unit) {
                 Row(Modifier.padding(start = 6.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     CurrentBrandIcon(Modifier.size(24.dp), RoundedCornerShape(8.dp))
-                    Text("Current", modifier = Modifier.padding(start = 8.dp),
+                    Text(stringResource(R.string.app_name), modifier = Modifier.padding(start = 8.dp),
                         style = MaterialTheme.typography.labelLarge)
                 }
             }
-            Text("WEB BROWSER", style = MaterialTheme.typography.labelLarge,
+            Text(stringResource(R.string.welcome_browser_label), style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(38.dp))
         WelcomeCollage()
         Spacer(Modifier.height(36.dp))
-        Text("새로운 탐색의 시작", style = MaterialTheme.typography.headlineLarge,
+        Text(stringResource(R.string.welcome_title), style = MaterialTheme.typography.headlineLarge,
             textAlign = TextAlign.Center)
         Spacer(Modifier.height(12.dp))
-        Text("필요한 페이지를 빠르게 찾고, 마음에 드는 곳은 편하게 다시 만나세요.",
+        Text(stringResource(R.string.welcome_detail),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         Spacer(Modifier.height(34.dp))
@@ -131,7 +131,7 @@ internal fun WelcomeScreen(onStart: () -> Unit) {
             shape = CircleShape,
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary,
                 contentColor = MaterialTheme.colorScheme.onSecondary)) {
-            Text("시작하기", style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(R.string.welcome_start), style = MaterialTheme.typography.labelLarge)
         }
         Spacer(Modifier.height(28.dp))
     }
@@ -156,9 +156,9 @@ private fun WelcomeCollage() {
                 Icon(Icons.Filled.Language, contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(35.dp))
                 Spacer(Modifier.height(10.dp))
-                Text("세상을 탐색하세요", style = MaterialTheme.typography.titleMedium,
+                Text(stringResource(R.string.welcome_explore), style = MaterialTheme.typography.titleMedium,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("언제나 손끝에서", style = MaterialTheme.typography.bodySmall,
+                Text(stringResource(R.string.welcome_anytime), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -171,7 +171,7 @@ private fun WelcomeCollage() {
                 Icon(Icons.Filled.Search, contentDescription = null,
                     tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(34.dp))
                 Spacer(Modifier.height(25.dp))
-                Text("무엇을 찾으세요?", color = MaterialTheme.colorScheme.onPrimary,
+                Text(stringResource(R.string.new_tab_title), color = MaterialTheme.colorScheme.onPrimary,
                     style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(10.dp))
                 Box(Modifier.fillMaxWidth().height(28.dp)
@@ -188,7 +188,7 @@ private fun WelcomeCollage() {
             shadowElevation = 14.dp,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
             Column(Modifier.padding(18.dp)) {
-                MiniAddress("내 탭")
+                MiniAddress(stringResource(R.string.welcome_my_tabs))
                 Spacer(Modifier.height(18.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(Modifier.size(50.dp), shape = RoundedCornerShape(16.dp),
@@ -199,9 +199,9 @@ private fun WelcomeCollage() {
                         }
                     }
                     Column(Modifier.padding(start = 12.dp)) {
-                        Text("좋아하는 페이지", style = MaterialTheme.typography.bodyLarge,
+                        Text(stringResource(R.string.welcome_favorite), style = MaterialTheme.typography.bodyLarge,
                             fontWeight = FontWeight.Medium)
-                        Text("언제든 다시 열기", style = MaterialTheme.typography.bodySmall,
+                        Text(stringResource(R.string.welcome_reopen), style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }

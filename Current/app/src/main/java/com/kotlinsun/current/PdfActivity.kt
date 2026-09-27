@@ -15,8 +15,10 @@ import androidx.pdf.viewer.fragment.PdfViewerFragment
 class CurrentPdfFragment : PdfViewerFragment() {
     override fun onLoadDocumentError(error: Throwable) {
         super.onLoadDocumentError(error)
-        Toast.makeText(requireContext(), "PDF를 열지 못했습니다. 다른 PDF 앱으로 열어 주세요.",
-            Toast.LENGTH_LONG).show()
+        context?.let {
+            Toast.makeText(it, R.string.pdf_open_error,
+                Toast.LENGTH_LONG).show()
+        }
     }
 }
 
@@ -30,19 +32,19 @@ class PdfActivity : AppCompatActivity() {
         val uri = intent.data ?: run { finish(); return }
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val back = Button(this).apply {
-            text = "뒤로"
+            text = getString(R.string.back)
             setOnClickListener { finish() }
         }
         val external = Button(this).apply {
-            text = "다른 PDF 앱으로 열기"
+            text = getString(R.string.pdf_external_open)
             setOnClickListener {
                 try {
                     startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/pdf")
                         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
                 } catch (_: ActivityNotFoundException) {
-                    Toast.makeText(this@PdfActivity, "다른 PDF 앱이 없습니다.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@PdfActivity, R.string.pdf_app_missing, Toast.LENGTH_SHORT).show()
                 } catch (_: SecurityException) {
-                    Toast.makeText(this@PdfActivity, "PDF 파일에 접근할 수 없습니다.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@PdfActivity, R.string.pdf_access_error, Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -56,7 +58,7 @@ class PdfActivity : AppCompatActivity() {
                 supportFragmentManager.beginTransaction().replace(R.id.pdf_container, it, "pdf").commitNow()
             }
         runCatching { fragment.documentUri = uri }.onFailure {
-            Toast.makeText(this, "PDF를 열지 못했습니다. 다른 앱으로 열어 주세요.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, R.string.pdf_open_error, Toast.LENGTH_LONG).show()
         }
     }
 }

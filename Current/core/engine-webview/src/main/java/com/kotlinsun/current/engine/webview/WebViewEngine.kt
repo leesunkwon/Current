@@ -37,6 +37,7 @@ import androidx.webkit.ProfileStore
 import androidx.webkit.WebViewCompat.WebMessageListener
 import com.kotlinsun.current.engine.BlobReceiver
 import com.kotlinsun.current.engine.BlobTransfer
+import com.kotlinsun.current.engine.BLOB_TRANSFER_CANCELLED
 import com.kotlinsun.current.engine.BrowserEngine
 import com.kotlinsun.current.engine.DownloadRequest
 import com.kotlinsun.current.engine.EngineCallbacks
@@ -95,9 +96,11 @@ private class WebViewSession(
     config: SessionConfig,
     private val callbacks: EngineCallbacks,
 ) : EngineSession {
+    private val appContext = context.applicationContext
     private val mutableState = MutableStateFlow(EngineState())
     override val state: StateFlow<EngineState> = mutableState
     private var closed = false
+    private var rendererGone = false
     private val webView = WebView(context)
     private val pending = mutableSetOf<Pending>()
     private val permissionRequests = mutableMapOf<PermissionRequest, WebPermissionRequest>()
@@ -106,6 +109,7 @@ private class WebViewSession(
     private var dialogsOnPage = 0
     private var approvedHttpUrl: String? = null
     private var activeBlob: BlobTransfer? = null
+    private val mobileUserAgent = webView.settings.userAgentString.orEmpty()
     override val view get() = webView
     override val userAgent get() = webView.settings.userAgentString.orEmpty()
 
@@ -123,8 +127,13 @@ private class WebViewSession(
 
     init {
         config.profileName?.let {
-            check(WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE))
-            WebViewCompat.setProfile(webView, it)
+            try {
+                check(WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE))
+                WebViewCompat.setProfile(webView, it)
+            } catch (error: RuntimeException) {
+                webView.destroy()
+                throw error
+            }
             webView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
         }
         webView.settings.apply {
@@ -144,11 +153,20 @@ private class WebViewSession(
             setGeolocationEnabled(true)
         }
         applySettings(config.allowThirdPartyCookies, config.textZoom)
+        setDesktopMode(config.desktopMode)
+        webView.setFindListener { activeIndex, total, done ->
+            if (!closed && done) callbacks.onFindResult(id, activeIndex, total)
+        }
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            // A browser cannot know the next site's origin before navigation. The bridge accepts
+            // data only for an app-started HTTPS transfer from its current main frame and token.
             WebViewCompat.addWebMessageListener(webView, "CurrentBlobBridge", setOf("*"),
                 WebMessageListener { _, message, origin, mainFrame, reply ->
-                    (activeBlob as? WebBlobTransfer)?.receive(message.data, origin, mainFrame) { sequence, ok ->
-                        runCatching { reply.postMessage("$sequence:${if (ok) "ok" else "stop"}") }
+                    if (mainFrame && origin.scheme == "https") {
+                        val data = runCatching { message.data }.getOrNull()
+                        (activeBlob as? WebBlobTransfer)?.receive(data, origin, mainFrame) { sequence, ok ->
+                            runCatching { reply.postMessage("$sequence:${if (ok) "ok" else "stop"}") }
+                        }
                     }
                 })
         }
@@ -166,10 +184,9 @@ private class WebViewSession(
                     return true
                 }
                 if (scheme == "http" || scheme == "https") return false
-                if (scheme == "about" || scheme == "data" || scheme == "blob") return false
-                if (request.isForMainFrame && scheme != "file" && scheme != "content") {
-                    callbacks.onExternalNavigation(id, uri.toString(), request.hasGesture())
-                }
+                if (!request.isForMainFrame && scheme in setOf("about", "data", "blob")) return false
+                if (scheme in setOf("file", "content", "about", "data", "blob", "javascript")) return true
+                if (request.isForMainFrame) callbacks.onExternalNavigation(id, uri.toString(), request.hasGesture())
                 return true
             }
 
@@ -201,7 +218,9 @@ private class WebViewSession(
 
             override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
                 if (request.isForMainFrame && errorResponse.statusCode >= 500) {
-                    update { it.copy(isLoading = false, error = PageError("서버 오류 ${errorResponse.statusCode}", request.url.toString())) }
+                    update { it.copy(isLoading = false, error = PageError(
+                        appContext.getString(R.string.engine_server_error, errorResponse.statusCode),
+                        request.url.toString())) }
                 }
             }
 
@@ -209,16 +228,18 @@ private class WebViewSession(
                 handler.cancel()
                 if (error.url == mutableState.value.url || error.url == view.url) {
                     update { it.copy(isLoading = false,
-                        error = PageError("보안 연결을 확인할 수 없습니다.", error.url)) }
+                        error = PageError(appContext.getString(R.string.engine_ssl_error), error.url)) }
                 }
             }
 
             override fun onSafeBrowsingHit(view: WebView, request: WebResourceRequest, threatType: Int, callback: SafeBrowsingResponse) {
                 callback.backToSafety(true)
-                if (request.isForMainFrame) update { it.copy(isLoading = false, error = PageError("안전하지 않은 사이트가 차단되었습니다.", request.url.toString())) }
+                if (request.isForMainFrame) update { it.copy(isLoading = false,
+                    error = PageError(appContext.getString(R.string.engine_unsafe_site), request.url.toString())) }
             }
 
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                rendererGone = true
                 runCatching { callbacks.onRendererGone(id, this@WebViewSession) }
                     .onFailure { runCatching { close() } }
                 return true
@@ -427,9 +448,9 @@ private class WebViewSession(
             override val origin = runCatching {
                 Uri.parse(url).let { uri ->
                     if (uri.scheme in listOf("http", "https") && !uri.host.isNullOrBlank())
-                        uri.scheme + "://" + uri.host else "웹 페이지"
+                        uri.scheme + "://" + uri.host else appContext.getString(R.string.engine_web_page)
                 }
-            }.getOrDefault("웹 페이지")
+            }.getOrDefault(appContext.getString(R.string.engine_web_page))
             override val message = dialogMessage
             override val defaultValue = initialValue
             override fun confirm(value: String?) = completion.finish {
@@ -455,23 +476,26 @@ private class WebViewSession(
         private var received = 0L
         private var nextSequence = 0
         private var awaitingChunk = false
-        private val timeout = Runnable { fail("파일 전송 시간이 초과되었습니다.") }
+        private val timeout = Runnable { fail(appContext.getString(R.string.engine_blob_timeout)) }
         private val handler = Handler(Looper.getMainLooper())
 
         init { handler.postDelayed(timeout, 120_000) }
 
         fun receive(data: String?, origin: Uri, mainFrame: Boolean, reply: (Int, Boolean) -> Unit) {
-            val message = runCatching { JSONObject(data ?: "") }.getOrNull() ?: return
-            if (message.optString("token") != token) return
-            val sequence = message.optInt("seq", -2)
             val page = Uri.parse(webView.url.orEmpty())
             if (finished || closed || !mainFrame || origin.scheme != source.scheme ||
-                origin.host != source.host || origin.port != source.port ||
-                page.scheme != source.scheme || page.host != source.host || page.port != source.port) {
-                reply(sequence, false)
-                fail("페이지가 바뀌어 다운로드를 중단했습니다.")
+                origin.host != source.host || origin.port != source.port) return
+            if (page.scheme != source.scheme || page.host != source.host || page.port != source.port) {
+                fail(appContext.getString(R.string.engine_blob_page_changed))
                 return
             }
+            if (data == null || data.length > 90_000) {
+                fail(appContext.getString(R.string.engine_blob_data_error))
+                return
+            }
+            val message = runCatching { JSONObject(data) }.getOrNull() ?: return
+            if (message.optString("token") != token) return
+            val sequence = message.optInt("seq", -2)
             handler.removeCallbacks(timeout)
             handler.postDelayed(timeout, 120_000)
             when (message.optString("type")) {
@@ -479,7 +503,7 @@ private class WebViewSession(
                     val size = message.optLong("size", -1)
                     if (sequence != -1 || expectedSize >= 0 || size < 0 || size > limit) {
                         reply(sequence, false)
-                        fail("파일 크기 제한을 초과했습니다.")
+                        fail(appContext.getString(R.string.engine_blob_size_error))
                     } else {
                         expectedSize = size
                         reply(sequence, true)
@@ -490,7 +514,7 @@ private class WebViewSession(
                     if (expectedSize < 0 || awaitingChunk || sequence != nextSequence || bytes == null ||
                         bytes.size > 48 * 1024 || received + bytes.size > expectedSize) {
                         reply(sequence, false)
-                        fail("파일 데이터를 확인할 수 없습니다.")
+                        fail(appContext.getString(R.string.engine_blob_data_error))
                     } else {
                         awaitingChunk = true
                         received += bytes.size
@@ -499,7 +523,7 @@ private class WebViewSession(
                             Handler(Looper.getMainLooper()).post {
                                 awaitingChunk = false
                                 reply(sequence, success && !finished)
-                                if (!success) fail("파일을 저장하지 못했습니다.")
+                                if (!success) fail(appContext.getString(R.string.engine_blob_save_error))
                             }
                         }
                     }
@@ -507,7 +531,7 @@ private class WebViewSession(
                 "complete" -> {
                     if (awaitingChunk || sequence != nextSequence || received != expectedSize) {
                         reply(sequence, false)
-                        fail("파일이 완전히 전달되지 않았습니다.")
+                        fail(appContext.getString(R.string.engine_blob_incomplete))
                     } else {
                         finished = true
                         activeBlob = null
@@ -519,8 +543,8 @@ private class WebViewSession(
                 "error" -> {
                     reply(sequence, false)
                     fail(if (message.optString("reason") == "size")
-                        "파일 크기가 20MiB 제한을 초과했습니다."
-                    else "페이지에서 파일을 읽지 못했습니다.")
+                        appContext.getString(R.string.engine_blob_20mib_limit)
+                    else appContext.getString(R.string.engine_blob_page_read_error))
                 }
             }
         }
@@ -533,18 +557,18 @@ private class WebViewSession(
             receiver.onError(message)
         }
 
-        override fun cancel() = fail("취소됨")
+        override fun cancel() = fail(BLOB_TRANSFER_CANCELLED)
     }
 
     override fun blobUnavailableReason(url: String): String? {
-        if (closed) return "탭이 닫혀 파일을 받을 수 없습니다."
+        if (closed) return appContext.getString(R.string.engine_blob_tab_closed)
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
-            return "이 기기의 WebView는 blob 다운로드를 지원하지 않습니다."
+            return appContext.getString(R.string.engine_blob_unsupported)
         val page = Uri.parse(webView.url.orEmpty())
-        if (page.scheme !in listOf("http", "https") || page.host.isNullOrBlank())
-            return "활성 웹 페이지에서만 blob 파일을 받을 수 있습니다."
+        if (page.scheme != "https" || page.host.isNullOrBlank())
+            return appContext.getString(R.string.engine_blob_https_only)
         val origin = "${page.scheme}://${page.host}${if (page.port >= 0) ":${page.port}" else ""}"
-        if (!url.startsWith("blob:$origin/")) return "다른 출처의 blob 파일은 받을 수 없습니다."
+        if (!url.startsWith("blob:$origin/")) return appContext.getString(R.string.engine_blob_other_origin)
         return null
     }
 
@@ -579,7 +603,12 @@ private class WebViewSession(
                 await send({type:'complete',seq:sequence,mime:blob.type});
             } catch (_) {await send({type:'error',seq:-1});}
         })();""".trimIndent()
-        webView.evaluateJavascript(script, null)
+        try {
+            webView.evaluateJavascript(script, null)
+        } catch (error: RuntimeException) {
+            transfer.cancel()
+            throw error
+        }
         return transfer
     }
 
@@ -590,6 +619,27 @@ private class WebViewSession(
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, allowThirdPartyCookies)
         webView.settings.textZoom = textZoom.coerceIn(75, 300)
     }
+
+    override fun setDesktopMode(enabled: Boolean) {
+        if (closed) return
+        webView.settings.apply {
+            userAgentString = if (enabled) mobileUserAgent.replace("; wv", "")
+                .replace(" Mobile", "") else mobileUserAgent
+            useWideViewPort = enabled
+            loadWithOverviewMode = enabled
+        }
+    }
+
+    override fun find(text: String) {
+        if (!closed) {
+            webView.clearMatches()
+            if (text.isNotBlank()) webView.findAllAsync(text)
+            else callbacks.onFindResult(id, 0, 0)
+        }
+    }
+
+    override fun findNext(forward: Boolean) { if (!closed) webView.findNext(forward) }
+    override fun clearFind() { if (!closed) webView.clearMatches() }
 
     override fun createPrintAdapter(jobName: String): PrintDocumentAdapter? =
         if (closed) null else webView.createPrintDocumentAdapter(jobName)
@@ -698,10 +748,12 @@ private class WebViewSession(
         pending.toList().forEach { runCatching { it.cancel() } }
         permissionRequests.clear()
         geoRequest = null
-        (webView.parent as? ViewGroup)?.removeView(webView)
-        runCatching { webView.stopLoading() }
-        runCatching { webView.webChromeClient = null }
-        runCatching { webView.webViewClient = WebViewClient() }
+        runCatching { (webView.parent as? ViewGroup)?.removeView(webView) }
+        if (!rendererGone) {
+            runCatching { webView.stopLoading() }
+            runCatching { webView.webChromeClient = null }
+            runCatching { webView.webViewClient = WebViewClient() }
+        }
         runCatching { webView.destroy() }
     }
 }

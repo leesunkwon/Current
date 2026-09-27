@@ -2,13 +2,14 @@ package com.kotlinsun.current.browser
 
 import android.app.DownloadManager
 import android.graphics.BitmapFactory
+import android.text.format.Formatter
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -22,42 +23,30 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Print
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -84,32 +73,26 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import com.kotlinsun.current.data.BookmarkRecord
+import com.kotlinsun.current.R
 import com.kotlinsun.current.engine.JavaScriptDialogKind
 import com.kotlinsun.current.engine.TabMode
-import com.kotlinsun.current.ui.theme.BrowserNavigation
 import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
@@ -119,12 +102,15 @@ fun BrowserScreen(controller: BrowserController) {
     val ui by controller.ui.collectAsState()
     val selected = ui.selectedTab
     val focus = LocalFocusManager.current
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     var address by remember { mutableStateOf(TextFieldValue("")) }
     var editing by remember { mutableStateOf(false) }
     var suggestionsVisible by remember { mutableStateOf(false) }
     var invalidAddress by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
+    val tabClosedMessage = stringResource(R.string.tab_closed)
+    val undoLabel = stringResource(R.string.undo)
 
     LaunchedEffect(ui.page, ui.selectedId, ui.activeMode, ui.showOnboarding) {
         menu = false
@@ -137,7 +123,7 @@ fun BrowserScreen(controller: BrowserController) {
 
     LaunchedEffect(ui.lastClosedTabId) {
         val latestId = ui.lastClosedTabId ?: return@LaunchedEffect
-        if (snackbar.showSnackbar("탭을 닫았습니다.", "되돌리기", duration = SnackbarDuration.Short) ==
+        if (snackbar.showSnackbar(tabClosedMessage, undoLabel, duration = SnackbarDuration.Short) ==
             androidx.compose.material3.SnackbarResult.ActionPerformed) controller.reopenClosedTab(latestId)
     }
 
@@ -152,12 +138,16 @@ fun BrowserScreen(controller: BrowserController) {
     }
     val onAddressChange: (TextFieldValue) -> Unit = { next ->
         val textChanged = next.text != address.text
-        val completed = if (textChanged && next.composition == null && next.selection.collapsed &&
+        val compositionFinished = address.composition != null && next.composition == null
+        val completed = if (textChanged && !compositionFinished && next.composition == null &&
+            next.selection.collapsed &&
             next.selection.end == next.text.length) controller.inlineCompletion(next.text) else null
         address = if (completed != null) TextFieldValue(completed,
             selection = TextRange(next.text.length, completed.length)) else next
         invalidAddress = false
-        if (textChanged) {
+        if (next.composition != null) {
+            dismissSuggestions()
+        } else if (textChanged || compositionFinished) {
             suggestionsVisible = next.text.isNotBlank()
             controller.updateSuggestions(next.text)
         }
@@ -185,6 +175,11 @@ fun BrowserScreen(controller: BrowserController) {
         focus.clearFocus()
         editing = false
     }
+    BackHandler(enabled = editing && ui.page == BrowserPage.WEB && ui.dialog == null &&
+        ui.linkTarget == null && ui.pendingExternalUrl == null) {
+        focus.clearFocus()
+        dismissSuggestions()
+    }
 
     ui.dialog?.let { BrowserDialogView(it, controller) }
     ui.linkTarget?.let { target ->
@@ -192,44 +187,51 @@ fun BrowserScreen(controller: BrowserController) {
             shape = RoundedCornerShape(28.dp),
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
-            title = { Text(if (target.imageUrl != null) "이미지·링크" else "링크") },
+            title = { Text(stringResource(if (target.imageUrl != null)
+                R.string.image_and_link else R.string.link)) },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     Text(target.url, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     TextButton(onClick = { controller.openLink(true) }, modifier = Modifier.heightIn(min = 48.dp)) {
-                        Text("새 탭에서 열기")
+                        Text(stringResource(R.string.open_new_tab))
                     }
                     TextButton(onClick = { controller.openLink(false) }, modifier = Modifier.heightIn(min = 48.dp)) {
-                        Text("백그라운드 탭에서 열기")
+                        Text(stringResource(R.string.open_background_tab))
                     }
                     if (ui.activeMode == TabMode.NORMAL && ui.privateAvailable) {
                         TextButton(onClick = { controller.openLink(true, true) },
-                            modifier = Modifier.heightIn(min = 48.dp)) { Text("시크릿 탭에서 열기") }
+                            modifier = Modifier.heightIn(min = 48.dp)) {
+                            Text(stringResource(R.string.open_private_tab))
+                        }
                     }
                     TextButton(onClick = controller::copyLink, modifier = Modifier.heightIn(min = 48.dp)) {
-                        Text("링크 복사")
+                        Text(stringResource(R.string.copy_link))
                     }
                     TextButton(onClick = controller::shareLink, modifier = Modifier.heightIn(min = 48.dp)) {
-                        Text("링크 공유")
+                        Text(stringResource(R.string.share_link))
                     }
                     if (target.imageUrl != null) TextButton(onClick = controller::saveImage,
-                        modifier = Modifier.heightIn(min = 48.dp)) { Text("이미지 저장") }
+                        modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(stringResource(R.string.save_image))
+                    }
                 }
             },
             confirmButton = { TextButton(onClick = controller::dismissLinkMenu,
-                modifier = Modifier.heightIn(min = 48.dp)) { Text("닫기") } })
+                modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.close))
+            } })
     }
     ui.pendingExternalUrl?.let { url ->
         AlertDialog(onDismissRequest = controller::dismissExternal,
             shape = RoundedCornerShape(28.dp),
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
-            title = { Text("외부 앱 열기") },
+            title = { Text(stringResource(R.string.open_external_app)) },
             text = { Text(url) },
             confirmButton = { TextButton(onClick = controller::confirmExternal,
-                modifier = Modifier.heightIn(min = 48.dp)) { Text("열기") } },
+                modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.open)) } },
             dismissButton = { TextButton(onClick = controller::dismissExternal,
-                modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") } })
+                modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.cancel)) } })
     }
 
     ui.fullScreenView?.let { fullView ->
@@ -254,14 +256,16 @@ fun BrowserScreen(controller: BrowserController) {
                                     Icon(Icons.Filled.Lock, contentDescription = null,
                                         modifier = Modifier.size(28.dp))
                                 } else CurrentBrandIcon(Modifier.size(28.dp), RoundedCornerShape(6.dp))
-                                Text(if (ui.activeMode == TabMode.PRIVATE) "시크릿 탭" else "Current",
+                                Text(stringResource(if (ui.activeMode == TabMode.PRIVATE)
+                                    R.string.private_tab else R.string.app_name),
                                     modifier = Modifier.weight(1f).padding(start = 10.dp),
                                     style = MaterialTheme.typography.titleMedium,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         } else {
                             if (ui.activeMode == TabMode.PRIVATE) {
-                                Icon(Icons.Filled.Lock, contentDescription = "시크릿 탭",
+                                Icon(Icons.Filled.Lock,
+                                    contentDescription = stringResource(R.string.private_tab),
                                     modifier = Modifier.size(20.dp))
                                 Spacer(Modifier.width(8.dp))
                             }
@@ -281,6 +285,7 @@ fun BrowserScreen(controller: BrowserController) {
                             menu = expanded
                         })
                     }
+                    if (ui.findVisible && selected?.url != null) BrowserFindBar(ui, controller)
                     if (selected?.engine?.isLoading == true) LinearProgressIndicator(
                         progress = { selected.engine.progress / 100f },
                         modifier = Modifier.fillMaxWidth().height(2.dp))
@@ -290,7 +295,8 @@ fun BrowserScreen(controller: BrowserController) {
                         verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { controller.showPage(BrowserPage.WEB) },
                             modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "웹으로 돌아가기")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = stringResource(R.string.return_to_web))
                         }
                         Text(ui.page.label(), modifier = Modifier.padding(start = 8.dp),
                             style = MaterialTheme.typography.titleLarge)
@@ -300,7 +306,7 @@ fun BrowserScreen(controller: BrowserController) {
             }
         },
         bottomBar = {
-            if (ui.page == BrowserPage.WEB && !editing) BrowserBottomBar(ui, controller)
+            if (ui.page == BrowserPage.WEB && !editing && !imeVisible) BrowserBottomBar(ui, controller)
         },
     ) { padding ->
         // The top toolbar has its own space; only the floating bottom bar overlays web content.
@@ -311,8 +317,10 @@ fun BrowserScreen(controller: BrowserController) {
             when {
                 !ui.ready -> Column(Modifier.align(Alignment.Center).padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(ui.startupError ?: "브라우저를 준비하는 중…")
-                    if (ui.startupError != null) Button(onClick = controller::retryStart) { Text("다시 시도") }
+                    Text(ui.startupError ?: stringResource(R.string.startup_loading))
+                    if (ui.startupError != null) Button(onClick = controller::retryStart) {
+                        Text(stringResource(R.string.startup_retry))
+                    }
                 }
                 ui.page == BrowserPage.TABS -> TabSwitcher(ui, controller)
                 ui.page == BrowserPage.HISTORY -> HistoryScreen(ui, controller)
@@ -349,13 +357,16 @@ fun BrowserScreen(controller: BrowserController) {
                                         tint = MaterialTheme.colorScheme.primary)
                                 }
                                 Spacer(Modifier.height(20.dp))
-                                Text("페이지를 열 수 없습니다", style = MaterialTheme.typography.headlineSmall)
+                                Text(stringResource(R.string.page_load_error),
+                                    style = MaterialTheme.typography.headlineSmall)
                                 Spacer(Modifier.height(12.dp))
                                 Text(error.message, textAlign = TextAlign.Center,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(Modifier.height(16.dp))
                                 Button(onClick = controller::reloadOrStop, shape = CircleShape,
-                                    modifier = Modifier.heightIn(min = 48.dp)) { Text("다시 시도") }
+                                    modifier = Modifier.heightIn(min = 48.dp)) {
+                                    Text(stringResource(R.string.startup_retry))
+                                }
                             }
                         }
                     }
@@ -366,309 +377,15 @@ fun BrowserScreen(controller: BrowserController) {
 }
 
 @Composable
-private fun BrowserAddressField(
-    ui: BrowserUiState,
-    value: TextFieldValue,
-    editing: Boolean,
-    isError: Boolean,
-    onValueChange: (TextFieldValue) -> Unit,
-    onFocusChange: (Boolean) -> Unit,
-    onSubmit: () -> Unit,
-    onSuggestion: (AddressSuggestion) -> Unit,
-    onDismissSuggestions: () -> Unit,
-    modifier: Modifier = Modifier,
-    flat: Boolean = false,
-    suggestionsVisible: Boolean = false,
-) {
-    val isHome = ui.selectedTab?.url == null
-    val fieldShape = if (flat) RoundedCornerShape(16.dp) else CircleShape
-    val addressInput: @Composable () -> Unit = {
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth().onFocusChanged { onFocusChange(it.isFocused) }
-                .semantics { contentDescription = "주소 또는 검색어 입력" },
-            singleLine = true,
-            isError = isError,
-            placeholder = { Text("주소 또는 검색어") },
-            leadingIcon = {
-                Icon(if (isError) Icons.Filled.ErrorOutline else if (isHome || editing) Icons.Filled.Search else if (
-                    ui.selectedTab?.url?.startsWith("https://", true) == true) Icons.Filled.Lock
-                else Icons.Filled.Language, contentDescription = if (isError) "주소 입력 오류" else null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            },
-            trailingIcon = {
-                if (isHome || editing) IconButton(onClick = onSubmit,
-                    modifier = Modifier.size(48.dp)) {
-                    if (flat) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = "주소 또는 검색어 열기",
-                            modifier = Modifier.size(22.dp))
-                    } else {
-                        Box(Modifier.size(40.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
-                            contentAlignment = Alignment.Center) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowForward,
-                                contentDescription = "주소 또는 검색어 열기",
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.onPrimary)
-                        }
-                    }
-                }
-            },
-            shape = fieldShape,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = Color.Transparent,
-                unfocusedContainerColor = Color.Transparent,
-                errorContainerColor = Color.Transparent,
-                focusedBorderColor = Color.Transparent,
-                unfocusedBorderColor = Color.Transparent,
-                errorBorderColor = Color.Transparent,
-            ),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-            keyboardActions = KeyboardActions(onGo = { onSubmit() }),
-        )
-    }
-    Box(modifier) {
-        if (flat) {
-            val stroke = when {
-                isError -> MaterialTheme.colorScheme.error
-                editing -> MaterialTheme.colorScheme.primary
-                else -> MaterialTheme.colorScheme.outline
-            }
-            Surface(Modifier.fillMaxWidth(), shape = fieldShape,
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                border = BorderStroke(if (isError) 2.dp else if (editing) 1.5.dp else 1.dp, stroke),
-                tonalElevation = 0.dp, shadowElevation = 2.dp) { addressInput() }
-        } else {
-            BrowserGlassSurface(Modifier.fillMaxWidth(), shape = fieldShape,
-                focused = editing, error = isError) { addressInput() }
-        }
-        DropdownMenu(expanded = editing && suggestionsVisible && ui.suggestions.isNotEmpty(),
-            onDismissRequest = onDismissSuggestions,
-            offset = DpOffset(0.dp, 8.dp),
-            modifier = Modifier.widthIn(max = 360.dp).heightIn(max = 320.dp),
-            properties = PopupProperties(focusable = false),
-            shape = if (flat) RoundedCornerShape(16.dp) else RoundedCornerShape(24.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            tonalElevation = 0.dp,
-            shadowElevation = 16.dp,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
-            ui.suggestions.forEach { suggestion ->
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Text(suggestion.title, maxLines = 1)
-                            Text(suggestion.source, style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary)
-                            Text(suggestion.url, style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                        }
-                    },
-                    leadingIcon = {
-                        Icon(Icons.Filled.Search, contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary)
-                    },
-                    modifier = Modifier.semantics {
-                        contentDescription = "${suggestion.source}, ${suggestion.title}, ${suggestion.url}"
-                    },
-                    onClick = { onSuggestion(suggestion) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun BrowserMenu(
-    ui: BrowserUiState,
-    controller: BrowserController,
-    expanded: Boolean,
-    onExpandedChange: (Boolean) -> Unit,
-) {
-    BackHandler(enabled = expanded) { onExpandedChange(false) }
-    val configuration = LocalConfiguration.current
-    val menuWidth = (configuration.screenWidthDp - 48).coerceIn(1, 336).dp
-    val menuHeight = (configuration.screenHeightDp - 150).coerceIn(1, 600).dp
-    val popupOffset = with(LocalDensity.current) { 56.dp.roundToPx() }
-    fun perform(action: () -> Unit) {
-        onExpandedChange(false)
-        action()
-    }
-    Box {
-        IconButton(onClick = { onExpandedChange(true) }, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Filled.MoreVert, contentDescription = "브라우저 메뉴")
-        }
-        if (expanded) Popup(
-            alignment = Alignment.TopEnd,
-            offset = IntOffset(0, popupOffset),
-            onDismissRequest = { onExpandedChange(false) },
-            properties = PopupProperties(focusable = true,
-                dismissOnBackPress = true, dismissOnClickOutside = true),
-        ) {
-            Box(Modifier.padding(10.dp)) {
-                Surface(Modifier.width(menuWidth).heightIn(max = menuHeight)
-                    .semantics { paneTitle = "브라우저 메뉴" },
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    shadowElevation = 12.dp,
-                    tonalElevation = 0.dp) {
-                    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(14.dp)) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                                Text("CURRENT", style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary)
-                                Text("브라우저 메뉴", style = MaterialTheme.typography.titleMedium)
-                            }
-                            IconButton(onClick = { onExpandedChange(false) }, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Filled.Close, contentDescription = "메뉴 닫기")
-                            }
-                        }
-                        ui.selectedTab?.url?.let { url ->
-                            val bookmarked = ui.bookmarks.any { it.url == url }
-                            Text(AddressResolver.displayUrl(url),
-                                modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 4.dp),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            BrowserMenuSection("현재 페이지")
-                            BrowserMenuItem(if (bookmarked) "북마크에서 삭제" else "북마크에 저장",
-                                Icons.Filled.BookmarkBorder) {
-                                perform(controller::saveCurrentBookmark)
-                            }
-                            BrowserMenuItem("현재 주소 복사", Icons.Filled.ContentCopy) {
-                                perform(controller::copyCurrentPage)
-                            }
-                            BrowserMenuItem("현재 페이지 공유", Icons.Filled.Share) {
-                                perform(controller::shareCurrentPage)
-                            }
-                            BrowserMenuItem("현재 페이지 인쇄", Icons.Filled.Print) {
-                                perform(controller::printCurrentPage)
-                            }
-                        }
-                        BrowserMenuSection("보관함")
-                        if (ui.activeMode == TabMode.NORMAL) {
-                            BrowserMenuItem("방문 기록", Icons.Filled.History) {
-                                perform { controller.showPage(BrowserPage.HISTORY) }
-                            }
-                        }
-                        BrowserMenuItem("북마크", Icons.Filled.BookmarkBorder) {
-                            perform { controller.showPage(BrowserPage.BOOKMARKS) }
-                        }
-                        if (ui.activeMode == TabMode.NORMAL) {
-                            BrowserMenuItem("다운로드", Icons.Filled.FileDownload) {
-                                perform { controller.showPage(BrowserPage.DOWNLOADS) }
-                            }
-                        }
-                        if (ui.selectedTab?.url != null) {
-                            BrowserMenuItem("사이트 정보", Icons.Filled.Info) {
-                                perform { controller.showPage(BrowserPage.SITE_INFO) }
-                            }
-                        }
-                        BrowserMenuSection("브라우저")
-                        BrowserMenuItem("개인정보", Icons.Filled.Security) {
-                            perform { controller.showPage(BrowserPage.PRIVACY) }
-                        }
-                        BrowserMenuItem("설정", Icons.Filled.Settings) {
-                            perform { controller.showPage(BrowserPage.SETTINGS) }
-                        }
-                        if (ui.privateAvailable) {
-                            BrowserMenuItem("새 시크릿 탭", Icons.Filled.Lock) {
-                                perform { controller.newTab(mode = TabMode.PRIVATE) }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun BrowserMenuSection(title: String) {
-    Text(title, modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 4.dp),
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant)
-}
-
-@Composable
-private fun BrowserMenuItem(label: String, icon: ImageVector, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 54.dp).clip(RoundedCornerShape(8.dp))
-        .clickable(onClickLabel = label, onClick = onClick)
-        .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(38.dp).background(MaterialTheme.colorScheme.primaryContainer,
-            RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp),
-                tint = MaterialTheme.colorScheme.primary)
-        }
-        Text(label, modifier = Modifier.weight(1f).padding(start = 12.dp),
-            style = MaterialTheme.typography.bodyMedium)
-        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null,
-            modifier = Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun BrowserBottomBar(ui: BrowserUiState, controller: BrowserController) {
-    val selected = ui.selectedTab
-    val compact = LocalConfiguration.current.screenWidthDp < 320
-    val horizontalPadding = if (compact) 8.dp else 16.dp
-    Box(Modifier.fillMaxWidth().navigationBarsPadding()
-        .padding(start = horizontalPadding, top = 12.dp,
-            end = horizontalPadding, bottom = 12.dp),
-        contentAlignment = Alignment.Center) {
-        Surface(shape = CircleShape,
-            color = if (ui.activeMode == TabMode.PRIVATE) Color(0xFF363636) else BrowserNavigation,
-            contentColor = Color.White,
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
-            shadowElevation = 16.dp) {
-            Row(Modifier.padding(if (compact) 6.dp else 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 6.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = controller::goBack,
-                    enabled = selected?.engine?.canGoBack == true, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
-                }
-                IconButton(onClick = controller::goForward,
-                    enabled = selected?.engine?.canGoForward == true, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "앞으로")
-                }
-                IconButton(onClick = controller::reloadOrStop,
-                    enabled = selected?.url != null, modifier = Modifier.size(48.dp)) {
-                    Icon(if (selected?.engine?.isLoading == true) Icons.Filled.Stop else Icons.Filled.Refresh,
-                        contentDescription = if (selected?.engine?.isLoading == true) "로딩 중지" else "새로고침")
-                }
-                IconButton(onClick = { controller.showPage(BrowserPage.TABS) },
-                    modifier = Modifier.size(48.dp).semantics {
-                        contentDescription = if (ui.activeMode == TabMode.PRIVATE)
-                            "시크릿 탭 ${ui.visibleTabs.size}개, 탭 목록" else
-                            "일반 탭 ${ui.visibleTabs.size}개, 탭 목록"
-                    }) {
-                    Box(Modifier.size(27.dp).border(1.5.dp, Color.White,
-                        RoundedCornerShape(7.dp)), contentAlignment = Alignment.Center) {
-                        Text(ui.visibleTabs.size.toString(), style = MaterialTheme.typography.bodySmall,
-                            color = Color.White, maxLines = 1)
-                    }
-                }
-                IconButton(onClick = { controller.newTab() },
-                    modifier = Modifier.size(48.dp).background(Color.White, CircleShape)) {
-                    Icon(Icons.Filled.Add, contentDescription = "새 탭", tint = BrowserNavigation)
-                }
-            }
-        }
-    }
-}
-
 private fun BrowserPage.label(): String = when (this) {
-    BrowserPage.WEB -> "웹"
-    BrowserPage.TABS -> "탭"
-    BrowserPage.HISTORY -> "방문 기록"
-    BrowserPage.BOOKMARKS -> "북마크"
-    BrowserPage.DOWNLOADS -> "다운로드"
-    BrowserPage.PRIVACY -> "개인정보"
-    BrowserPage.SITE_INFO -> "사이트 정보"
-    BrowserPage.SETTINGS -> "설정"
+    BrowserPage.WEB -> stringResource(R.string.web_page)
+    BrowserPage.TABS -> stringResource(R.string.tabs)
+    BrowserPage.HISTORY -> stringResource(R.string.history)
+    BrowserPage.BOOKMARKS -> stringResource(R.string.bookmarks)
+    BrowserPage.DOWNLOADS -> stringResource(R.string.downloads)
+    BrowserPage.PRIVACY -> stringResource(R.string.privacy)
+    BrowserPage.SITE_INFO -> stringResource(R.string.site_info)
+    BrowserPage.SETTINGS -> stringResource(R.string.settings)
 }
 
 @Composable
@@ -678,6 +395,10 @@ private fun NewTabPage(
     chromePadding: PaddingValues,
     addressField: @Composable () -> Unit,
 ) {
+    val context = LocalContext.current
+    val singleQuickLinkColumn = LocalConfiguration.current.let {
+        it.screenWidthDp < 360 || it.fontScale >= 1.4f
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
         .padding(start = 22.dp, end = 22.dp,
             top = 20.dp,
@@ -694,12 +415,12 @@ private fun NewTabPage(
             }
         } else CurrentBrandIcon(Modifier.size(68.dp), RoundedCornerShape(24.dp))
         Spacer(Modifier.height(24.dp))
-        Text(if (ui.activeMode == TabMode.PRIVATE) "시크릿으로 탐색하세요" else "무엇을 찾으세요?",
+        Text(stringResource(if (ui.activeMode == TabMode.PRIVATE)
+            R.string.private_intro_title else R.string.new_tab_title),
             style = MaterialTheme.typography.headlineLarge, textAlign = TextAlign.Center)
         Spacer(Modifier.height(10.dp))
-        Text(if (ui.activeMode == TabMode.PRIVATE)
-            "이 탭의 방문 기록은 기기에 저장하지 않습니다."
-            else "주소를 입력하거나 검색해서 새로운 곳으로 이동하세요.",
+        Text(stringResource(if (ui.activeMode == TabMode.PRIVATE)
+            R.string.private_intro_detail else R.string.new_tab_detail),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center)
@@ -707,15 +428,16 @@ private fun NewTabPage(
         addressField()
         if (ui.activeMode == TabMode.NORMAL && ui.quickLinks.isNotEmpty()) {
             Spacer(Modifier.height(38.dp))
-            Text("빠른 실행", modifier = Modifier.fillMaxWidth(),
+            Text(stringResource(R.string.quick_access), modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(14.dp))
-            ui.quickLinks.take(4).chunked(2).forEach { pair ->
+            ui.quickLinks.take(4).chunked(if (singleQuickLinkColumn) 1 else 2).forEach { pair ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     pair.forEach { link ->
                         Surface(onClick = { controller.openSavedUrl(link.url) },
                             modifier = Modifier.weight(1f).heightIn(min = 86.dp).semantics {
-                                contentDescription = "${link.source}, ${link.title}, ${link.url} 열기"
+                                contentDescription = context.getString(R.string.quick_link_open,
+                                    context.getString(link.sourceRes), link.title, link.url)
                             },
                             shape = RoundedCornerShape(20.dp),
                             color = MaterialTheme.colorScheme.surface,
@@ -723,10 +445,11 @@ private fun NewTabPage(
                             Column(Modifier.padding(14.dp)) {
                                 Surface(shape = CircleShape,
                                     color = MaterialTheme.colorScheme.primaryContainer) {
-                                    Text(link.source,
+                                    Text(stringResource(link.sourceRes),
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.primary)
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                                 Spacer(Modifier.height(7.dp))
                                 Text(link.title, style = MaterialTheme.typography.bodyLarge,
@@ -734,7 +457,7 @@ private fun NewTabPage(
                             }
                         }
                     }
-                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+                    if (pair.size == 1 && !singleQuickLinkColumn) Spacer(Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(10.dp))
             }
@@ -758,8 +481,9 @@ private fun BrowserPanel(
 @Composable
 private fun ChoicePill(label: String, selected: Boolean, onClick: () -> Unit,
     modifier: Modifier = Modifier, enabled: Boolean = true) {
+    val state = stringResource(if (selected) R.string.selected else R.string.not_selected)
     Surface(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = 48.dp)
-        .semantics { stateDescription = if (selected) "선택됨" else "선택되지 않음" },
+        .semantics { stateDescription = state },
         shape = CircleShape,
         color = if (selected) MaterialTheme.colorScheme.primaryContainer else
             MaterialTheme.colorScheme.background,
@@ -768,25 +492,32 @@ private fun ChoicePill(label: String, selected: Boolean, onClick: () -> Unit,
         Box(Modifier.padding(horizontal = 10.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
             Text(label, style = MaterialTheme.typography.labelLarge,
                 color = if (selected) MaterialTheme.colorScheme.primary else
-                    MaterialTheme.colorScheme.onSurface, maxLines = 1)
+                    MaterialTheme.colorScheme.onSurface,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
 
 @Composable
 private fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
+    val context = LocalContext.current
+    val contextSelected = stringResource(R.string.selected)
+    val contextNotSelected = stringResource(R.string.not_selected)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
         .padding(horizontal = 16.dp, vertical = 12.dp)) {
-        Text("탐색 환경", style = MaterialTheme.typography.headlineSmall)
+        Text(stringResource(R.string.browser_environment),
+            style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(18.dp))
         BrowserPanel {
-            Text("검색엔진", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.search_engine), style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(10.dp))
             SearchEngine.entries.forEach { engine ->
                 Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                    .clickable(onClickLabel = "${engine.label} 검색엔진 선택") {
+                    .clickable(onClickLabel = context.getString(R.string.search_engine_select,
+                        engine.label)) {
                         controller.changeSearchEngine(engine)
-                    }.semantics { stateDescription = if (ui.searchEngine == engine) "선택됨" else "선택되지 않음" },
+                    }.semantics { stateDescription = if (ui.searchEngine == engine)
+                        contextSelected else contextNotSelected },
                     verticalAlignment = Alignment.CenterVertically) {
                     Text(engine.label, modifier = Modifier.weight(1f))
                     if (ui.searchEngine == engine) Text("✓", color = MaterialTheme.colorScheme.primary)
@@ -795,21 +526,24 @@ private fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
         }
         Spacer(Modifier.height(14.dp))
         BrowserPanel {
-            Text("화면 테마", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.screen_theme), style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ThemeChoice.entries.forEach { choice ->
-                    ChoicePill(choice.label, ui.themeChoice == choice,
-                        { controller.changeTheme(choice) }, modifier = Modifier.weight(1f))
+                    ChoicePill(stringResource(choice.labelRes), ui.themeChoice == choice,
+                        { controller.changeTheme(choice) }, modifier = Modifier.widthIn(min = 84.dp))
                 }
             }
             Spacer(Modifier.height(22.dp))
-            Text("웹 글꼴 크기 · ${ui.textZoom}%", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.web_text_size, ui.textZoom),
+                style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 listOf(100, 125, 150, 200).forEach { amount ->
                     ChoicePill("$amount%", ui.textZoom == amount,
-                        { controller.changeTextZoom(amount) }, modifier = Modifier.weight(1f))
+                        { controller.changeTextZoom(amount) }, modifier = Modifier.widthIn(min = 76.dp))
                 }
             }
         }
@@ -818,13 +552,16 @@ private fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
             Row(Modifier.fillMaxWidth().heightIn(min = 56.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("서드파티 쿠키 허용", style = MaterialTheme.typography.bodyLarge)
-                    Text("시크릿 탭에서는 항상 차단합니다.",
+                    Text(stringResource(R.string.third_party_cookies),
+                        style = MaterialTheme.typography.bodyLarge)
+                    Text(stringResource(R.string.private_cookies_blocked),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(checked = ui.allowThirdPartyCookies,
-                    modifier = Modifier.semantics { contentDescription = "서드파티 쿠키 허용" },
+                    modifier = Modifier.semantics {
+                        contentDescription = context.getString(R.string.third_party_cookies)
+                    },
                     enabled = ui.activeMode == TabMode.NORMAL,
                     onCheckedChange = controller::changeThirdPartyCookies)
             }
@@ -832,18 +569,21 @@ private fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
         Spacer(Modifier.height(14.dp))
         BrowserPanel {
             Row(Modifier.fillMaxWidth().heightIn(min = 52.dp)
-                .clickable(onClickLabel = "기본 브라우저 설정") { controller.requestDefaultBrowser() },
+                .clickable(onClickLabel = context.getString(R.string.default_browser_action)) {
+                    controller.requestDefaultBrowser()
+                },
                 verticalAlignment = Alignment.CenterVertically) {
-                Text(if (ui.defaultBrowser == true) "기본 브라우저로 설정됨" else "기본 브라우저로 설정",
+                Text(stringResource(if (ui.defaultBrowser == true)
+                    R.string.default_browser_set else R.string.default_browser_action),
                     modifier = Modifier.weight(1f))
                 Text("›", color = MaterialTheme.colorScheme.primary)
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             Row(Modifier.fillMaxWidth().heightIn(min = 52.dp)
-                .clickable(onClickLabel = "개인정보 삭제 화면 열기") {
+                .clickable(onClickLabel = context.getString(R.string.open_privacy_clear)) {
                     controller.showPage(BrowserPage.PRIVACY)
                 }, verticalAlignment = Alignment.CenterVertically) {
-                Text("개인정보 삭제", modifier = Modifier.weight(1f))
+                Text(stringResource(R.string.privacy_clear), modifier = Modifier.weight(1f))
                 Text("›", color = MaterialTheme.colorScheme.primary)
             }
         }
@@ -853,13 +593,21 @@ private fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
 
 @Composable
 private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
+    val context = LocalContext.current
+    val compact = LocalConfiguration.current.screenWidthDp < 360
+    val previewWidth = if (compact) 64.dp else 92.dp
+    val previewHeight = if (compact) 64.dp else 78.dp
+    val closeAllDescription = stringResource(if (ui.activeMode == TabMode.PRIVATE)
+        R.string.close_all_private_tabs else R.string.close_all_normal_tabs)
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ChoicePill("일반 ${ui.tabs.count { it.mode == TabMode.NORMAL }}",
+            ChoicePill(stringResource(R.string.normal_tab_label,
+                ui.tabs.count { it.mode == TabMode.NORMAL }),
                 ui.activeMode == TabMode.NORMAL, { controller.switchMode(TabMode.NORMAL) },
                 modifier = Modifier.weight(1f))
-            ChoicePill("시크릿 ${ui.tabs.count { it.mode == TabMode.PRIVATE }}",
+            ChoicePill(stringResource(R.string.private_tab_label,
+                ui.tabs.count { it.mode == TabMode.PRIVATE }),
                 ui.activeMode == TabMode.PRIVATE, { controller.switchMode(TabMode.PRIVATE) },
                 modifier = Modifier.weight(1f), enabled = ui.privateAvailable)
         }
@@ -871,18 +619,24 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = controller::closeAllTabs, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text("모두 닫기")
+            TextButton(onClick = controller::closeAllTabs,
+                modifier = Modifier.heightIn(min = 48.dp).semantics {
+                    contentDescription = closeAllDescription
+                }) {
+                Text(stringResource(R.string.close_all_tabs))
             }
             TextButton(onClick = { controller.newTab(mode = ui.activeMode) },
                 modifier = Modifier.heightIn(min = 48.dp)) {
                 Icon(Icons.Filled.Add, contentDescription = null)
-                Text("새 탭")
+                Text(stringResource(R.string.new_tab))
             }
         }
         LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(ui.visibleTabs, key = { it.id }) { tab ->
+                val tabMode = stringResource(if (tab.mode == TabMode.PRIVATE)
+                    R.string.private_mode else R.string.normal_mode)
+                val tabUrl = tab.url ?: stringResource(R.string.new_tab)
                 val image = remember(tab.preview) {
                     tab.preview?.let { bytes -> runCatching {
                         BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
@@ -894,13 +648,17 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                     Row(Modifier.fillMaxWidth().padding(10.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         Row(Modifier.weight(1f).heightIn(min = 80.dp)
-                            .clickable(onClickLabel = "${tab.title} 탭 열기") {
+                            .clickable(onClickLabel = context.getString(R.string.tab_open, tab.title)) {
                                 controller.selectTab(tab.id)
-                            }.semantics { contentDescription = "${tab.title}, ${tab.url ?: "새 탭"}" },
+                            }.semantics {
+                                contentDescription = context.getString(R.string.tab_description,
+                                    tabMode, tab.title, tabUrl)
+                            },
                             verticalAlignment = Alignment.CenterVertically) {
                             if (image != null) Image(image, contentDescription = null,
-                                modifier = Modifier.size(92.dp, 78.dp).clip(RoundedCornerShape(15.dp)))
-                            else Box(Modifier.size(92.dp, 78.dp)
+                                modifier = Modifier.size(previewWidth, previewHeight)
+                                    .clip(RoundedCornerShape(15.dp)))
+                            else Box(Modifier.size(previewWidth, previewHeight)
                                 .background(MaterialTheme.colorScheme.primaryContainer,
                                     RoundedCornerShape(15.dp)), contentAlignment = Alignment.Center) {
                                 Icon(if (tab.mode == TabMode.PRIVATE) Icons.Filled.Lock else
@@ -911,21 +669,23 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                                 Text(tab.title, style = MaterialTheme.typography.bodyLarge,
                                     maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 Spacer(Modifier.height(4.dp))
-                                Text(tab.url ?: "새 탭", style = MaterialTheme.typography.bodySmall,
+                                Text(tabUrl, style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                         }
                         IconButton(onClick = { controller.closeTab(tab.id) },
                             modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Filled.Close, contentDescription = "${tab.title} 탭 닫기")
+                            Icon(Icons.Filled.Close,
+                                contentDescription = stringResource(R.string.tab_close, tab.title))
                         }
                     }
                 }
             }
             if (ui.closedTabs.any { it.url != null }) {
                 item {
-                    Text("최근 닫은 탭", modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
+                    Text(stringResource(R.string.recently_closed_tabs),
+                        modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
                         style = MaterialTheme.typography.titleMedium)
                 }
                 items(ui.closedTabs.filter { it.url != null }, key = { "closed-" + it.id }) { closed ->
@@ -947,24 +707,27 @@ private fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
 
 @Composable
 private fun HistoryScreen(ui: BrowserUiState, controller: BrowserController) {
+    val context = LocalContext.current
     var query by remember { mutableStateOf("") }
+    val searchDescription = stringResource(R.string.search_history)
     val filtered = ui.history.filter { query.isBlank() ||
         it.url.contains(query, true) || it.title.contains(query, true) }
     Column(Modifier.fillMaxSize()) {
         OutlinedTextField(query, { query = it },
-            placeholder = { Text("방문 기록 검색") },
+            placeholder = { Text(stringResource(R.string.search_history)) },
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
             singleLine = true, shape = CircleShape,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = MaterialTheme.colorScheme.surface,
                 unfocusedContainerColor = MaterialTheme.colorScheme.surface),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-                .semantics { contentDescription = "방문 기록 검색" })
+                .semantics { contentDescription = searchDescription })
         LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (filtered.isEmpty()) item {
                 BrowserPanel(Modifier.fillMaxWidth()) {
-                    Text(if (query.isBlank()) "방문 기록이 없습니다." else "검색 결과가 없습니다.",
+                    Text(stringResource(if (query.isBlank())
+                        R.string.history_empty else R.string.search_empty),
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -994,7 +757,8 @@ private fun HistoryScreen(ui: BrowserUiState, controller: BrowserController) {
                             else Icon(Icons.Filled.Language, contentDescription = null,
                                 modifier = Modifier.size(28.dp), tint = MaterialTheme.colorScheme.primary)
                             Column(Modifier.weight(1f).heightIn(min = 56.dp)
-                                .clickable(onClickLabel = "${visit.title} 열기") {
+                                .clickable(onClickLabel = context.getString(R.string.visit_open,
+                                    visit.title)) {
                                     controller.openSavedUrl(visit.url)
                                 }.padding(start = 12.dp),
                                 verticalArrangement = Arrangement.Center) {
@@ -1006,7 +770,9 @@ private fun HistoryScreen(ui: BrowserUiState, controller: BrowserController) {
                             }
                             IconButton(onClick = { controller.deleteVisit(visit.id) },
                                 modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Filled.Close, contentDescription = "${visit.title} 기록 삭제")
+                                Icon(Icons.Filled.Close,
+                                    contentDescription = stringResource(R.string.visit_delete,
+                                        visit.title))
                             }
                         }
                     }
@@ -1018,6 +784,7 @@ private fun HistoryScreen(ui: BrowserUiState, controller: BrowserController) {
 
 @Composable
 private fun BookmarkScreen(ui: BrowserUiState, controller: BrowserController) {
+    val context = LocalContext.current
     var editing by remember { mutableStateOf<BookmarkRecord?>(null) }
     var title by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
@@ -1026,25 +793,28 @@ private fun BookmarkScreen(ui: BrowserUiState, controller: BrowserController) {
             shape = RoundedCornerShape(28.dp),
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
-            title = { Text("북마크 수정") },
+            title = { Text(stringResource(R.string.edit_bookmark)) },
             text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(title, { title = it }, label = { Text("제목") },
+                OutlinedTextField(title, { title = it },
+                    label = { Text(stringResource(R.string.title)) },
                     modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp))
-                OutlinedTextField(url, { url = it }, label = { Text("주소") },
+                OutlinedTextField(url, { url = it },
+                    label = { Text(stringResource(R.string.address)) },
                     modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp))
             } },
             confirmButton = { TextButton(onClick = {
                 controller.updateBookmark(item.id, title, url)
                 editing = null
-            }, modifier = Modifier.heightIn(min = 48.dp)) { Text("저장") } },
+            }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.save)) } },
             dismissButton = { TextButton(onClick = { editing = null },
-                modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") } })
+                modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.cancel)) } })
     }
     LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (ui.bookmarks.isEmpty()) item {
             BrowserPanel(Modifier.fillMaxWidth()) {
-                Text("저장한 북마크가 없습니다.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.bookmarks_empty),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         items(ui.bookmarks, key = { it.id }) { bookmark ->
@@ -1056,7 +826,8 @@ private fun BookmarkScreen(ui: BrowserUiState, controller: BrowserController) {
                         Icon(Icons.Filled.BookmarkBorder, contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
                         Column(Modifier.weight(1f).heightIn(min = 58.dp)
-                            .clickable(onClickLabel = "${bookmark.title} 북마크 열기") {
+                            .clickable(onClickLabel = context.getString(R.string.bookmark_open,
+                                bookmark.title)) {
                                 controller.openSavedUrl(bookmark.url)
                             }.padding(start = 12.dp), verticalArrangement = Arrangement.Center) {
                             Text(bookmark.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1071,10 +842,15 @@ private fun BookmarkScreen(ui: BrowserUiState, controller: BrowserController) {
                             editing = bookmark
                             title = bookmark.title
                             url = bookmark.url
-                        }, modifier = Modifier.heightIn(min = 48.dp)) { Text("수정") }
+                        }, modifier = Modifier.heightIn(min = 48.dp).semantics {
+                            contentDescription = context.getString(R.string.bookmark_edit,
+                                bookmark.title)
+                        }) { Text(stringResource(R.string.edit)) }
                         IconButton(onClick = { controller.deleteBookmark(bookmark.id) },
                             modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Filled.Close, contentDescription = "${bookmark.title} 북마크 삭제")
+                            Icon(Icons.Filled.Close,
+                                contentDescription = stringResource(R.string.bookmark_delete,
+                                    bookmark.title))
                         }
                     }
                 }
@@ -1085,10 +861,14 @@ private fun BookmarkScreen(ui: BrowserUiState, controller: BrowserController) {
 
 @Composable
 private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
-    LaunchedEffect(ui.page) {
-        while (true) {
-            controller.refreshDownloads()
+    val context = LocalContext.current
+    val hasActiveDownload = ui.downloads.any { it.status == DownloadManager.STATUS_PENDING ||
+        it.status == DownloadManager.STATUS_RUNNING || it.status == DownloadManager.STATUS_PAUSED }
+    LaunchedEffect(hasActiveDownload) {
+        controller.refreshDownloads()
+        while (hasActiveDownload) {
             delay(2000)
+            controller.refreshDownloads()
         }
     }
     LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 24.dp),
@@ -1097,22 +877,33 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
             BrowserPanel(Modifier.fillMaxWidth()) {
                 Text(error, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 TextButton(onClick = controller::refreshDownloads,
-                    modifier = Modifier.heightIn(min = 48.dp)) { Text("다시 시도") }
+                    modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.download_retry))
+                }
             }
         } }
+        if (ui.downloads.any { it.status == -1 } || ui.missingLocalDownloadIds.isNotEmpty()) item {
+            TextButton(onClick = controller::clearMissingDownloadRecords,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.download_missing_cleanup))
+            }
+        }
         if (ui.downloadError == null && ui.downloads.isEmpty() && ui.localDownloads.isEmpty()) {
             item { BrowserPanel(Modifier.fillMaxWidth()) {
-                Text("다운로드 기록이 없습니다.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.download_history_empty),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             } }
         }
         items(ui.downloads, key = { it.record.id }) { item ->
             val label = when (item.status) {
-                DownloadManager.STATUS_PENDING -> "대기 중"
-                DownloadManager.STATUS_RUNNING -> "다운로드 중"
-                DownloadManager.STATUS_PAUSED -> "일시 중지"
-                DownloadManager.STATUS_SUCCESSFUL -> "완료"
-                DownloadManager.STATUS_FAILED -> "실패 (${item.reason})"
-                else -> "파일 없음"
+                DownloadManager.STATUS_PENDING -> stringResource(R.string.download_pending)
+                DownloadManager.STATUS_RUNNING -> stringResource(R.string.download_running)
+                DownloadManager.STATUS_PAUSED -> stringResource(R.string.download_paused,
+                    downloadPauseReason(item.reason))
+                DownloadManager.STATUS_SUCCESSFUL -> stringResource(R.string.download_complete)
+                DownloadManager.STATUS_FAILED -> stringResource(R.string.download_failed,
+                    downloadFailureReason(item.reason))
+                else -> stringResource(R.string.download_missing)
             }
             BrowserPanel(Modifier.fillMaxWidth()) {
                 Text(item.record.fileName, style = MaterialTheme.typography.bodyLarge,
@@ -1123,32 +914,73 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
                 Text(label + (progress?.let { " · ${(it * 100).toInt()}%" } ?: ""),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall)
+                if (item.status == DownloadManager.STATUS_FAILED || item.status == -1) {
+                    Text(downloadRetryGuidance(item), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (item.status == DownloadManager.STATUS_RUNNING ||
+                    item.status == DownloadManager.STATUS_PAUSED) {
+                    Text(Formatter.formatShortFileSize(context, item.downloadedBytes.coerceAtLeast(0)) +
+                        if (item.totalBytes > 0) " / " + Formatter.formatShortFileSize(context, item.totalBytes)
+                        else "",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall)
+                }
                 if (progress != null && item.status == DownloadManager.STATUS_RUNNING) {
                     Spacer(Modifier.height(10.dp))
                     LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    if (item.status == DownloadManager.STATUS_FAILED || item.status == -1) {
+                        TextButton(onClick = { controller.retryDownload(item) },
+                            enabled = item.record.id !in ui.retryingDownloadIds,
+                            modifier = Modifier.heightIn(min = 48.dp).semantics {
+                                contentDescription = context.getString(R.string.download_retry_item,
+                                    item.record.fileName)
+                            }) { Text(stringResource(R.string.download_retry)) }
+                    }
                     if (item.status == DownloadManager.STATUS_SUCCESSFUL) {
                         TextButton(onClick = { controller.openDownload(item.record.id) },
-                            modifier = Modifier.heightIn(min = 48.dp)) { Text("열기") }
+                            modifier = Modifier.heightIn(min = 48.dp).semantics {
+                                contentDescription = context.getString(R.string.file_open,
+                                    item.record.fileName)
+                            }) { Text(stringResource(R.string.open)) }
                     }
                     TextButton(onClick = { controller.requestDeleteDownload(item) },
-                        modifier = Modifier.heightIn(min = 48.dp)) { Text("삭제") }
+                        modifier = Modifier.heightIn(min = 48.dp).semantics {
+                            contentDescription = context.getString(
+                                if (item.status == DownloadManager.STATUS_PENDING ||
+                                    item.status == DownloadManager.STATUS_RUNNING ||
+                                    item.status == DownloadManager.STATUS_PAUSED)
+                                    R.string.file_download_cancel else R.string.file_delete,
+                                item.record.fileName)
+                        }) {
+                        Text(stringResource(if (item.status == DownloadManager.STATUS_PENDING ||
+                            item.status == DownloadManager.STATUS_RUNNING ||
+                            item.status == DownloadManager.STATUS_PAUSED)
+                            R.string.cancel else R.string.delete))
+                    }
                 }
             }
         }
         items(ui.localDownloads, key = { "local-" + it.id }) { item ->
+            val missing = item.id in ui.missingLocalDownloadIds
             BrowserPanel(Modifier.fillMaxWidth()) {
                 Text(item.fileName, style = MaterialTheme.typography.bodyLarge,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(5.dp))
-                Text("저장 완료", style = MaterialTheme.typography.bodySmall,
+                Text(stringResource(if (missing) R.string.download_missing else R.string.download_complete),
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = { controller.openLocalDownload(item) },
-                        modifier = Modifier.heightIn(min = 48.dp)) { Text("열기") }
+                    if (!missing) TextButton(onClick = { controller.openLocalDownload(item) },
+                        modifier = Modifier.heightIn(min = 48.dp).semantics {
+                            contentDescription = context.getString(R.string.file_open, item.fileName)
+                        }) { Text(stringResource(R.string.open)) }
                     TextButton(onClick = { controller.requestDeleteLocalDownload(item) },
-                        modifier = Modifier.heightIn(min = 48.dp)) { Text("삭제") }
+                        modifier = Modifier.heightIn(min = 48.dp).semantics {
+                            contentDescription = context.getString(R.string.file_delete, item.fileName)
+                        }) { Text(stringResource(R.string.delete)) }
                 }
             }
         }
@@ -1156,13 +988,52 @@ private fun DownloadScreen(ui: BrowserUiState, controller: BrowserController) {
 }
 
 @Composable
+private fun downloadFailureReason(reason: Int): String = when (reason) {
+    DownloadManager.ERROR_INSUFFICIENT_SPACE -> stringResource(R.string.download_missing_space)
+    DownloadManager.ERROR_FILE_ERROR -> stringResource(R.string.download_file_error)
+    DownloadManager.ERROR_HTTP_DATA_ERROR -> stringResource(R.string.download_network_data_error)
+    DownloadManager.ERROR_UNHANDLED_HTTP_CODE -> stringResource(R.string.download_http_error)
+    DownloadManager.ERROR_CANNOT_RESUME -> stringResource(R.string.download_cannot_resume)
+    DownloadManager.ERROR_DEVICE_NOT_FOUND -> stringResource(R.string.download_device_missing)
+    DownloadManager.ERROR_TOO_MANY_REDIRECTS -> stringResource(R.string.download_redirect_error)
+    DownloadManager.ERROR_FILE_ALREADY_EXISTS -> stringResource(R.string.download_file_exists)
+    else -> stringResource(R.string.download_unknown_error, reason)
+}
+
+@Composable
+private fun downloadRetryGuidance(item: DownloadItem): String = when {
+    item.status == -1 -> stringResource(R.string.download_missing_guidance)
+    item.reason == DownloadManager.ERROR_INSUFFICIENT_SPACE ->
+        stringResource(R.string.download_space_guidance)
+    item.reason == DownloadManager.ERROR_FILE_ERROR ||
+        item.reason == DownloadManager.ERROR_DEVICE_NOT_FOUND ->
+        stringResource(R.string.download_storage_guidance)
+    item.reason == DownloadManager.ERROR_HTTP_DATA_ERROR ||
+        item.reason == DownloadManager.ERROR_CANNOT_RESUME ->
+        stringResource(R.string.download_network_guidance)
+    item.reason == DownloadManager.ERROR_UNHANDLED_HTTP_CODE ||
+        item.reason == DownloadManager.ERROR_TOO_MANY_REDIRECTS ->
+        stringResource(R.string.download_server_guidance)
+    else -> stringResource(R.string.download_general_guidance)
+}
+
+@Composable
+private fun downloadPauseReason(reason: Int): String = when (reason) {
+    DownloadManager.PAUSED_WAITING_FOR_NETWORK -> stringResource(R.string.download_wait_network)
+    DownloadManager.PAUSED_QUEUED_FOR_WIFI -> stringResource(R.string.download_wait_wifi)
+    DownloadManager.PAUSED_WAITING_TO_RETRY -> stringResource(R.string.download_wait_retry)
+    else -> stringResource(R.string.download_wait_other)
+}
+
+@Composable
 private fun PrivacyScreen(controller: BrowserController) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
         .padding(horizontal = 16.dp, vertical = 12.dp)) {
         BrowserPanel(Modifier.fillMaxWidth()) {
-            Text("방문 기록 삭제", style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.delete_history), style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(8.dp))
-            Text("삭제할 기간을 선택하세요.", style = MaterialTheme.typography.bodySmall,
+            Text(stringResource(R.string.choose_delete_range),
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(14.dp))
             HistoryRange.entries.chunked(2).forEach { pair ->
@@ -1174,7 +1045,7 @@ private fun PrivacyScreen(controller: BrowserController) {
                             color = MaterialTheme.colorScheme.background,
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
                             Box(contentAlignment = Alignment.Center) {
-                                Text(range.label, style = MaterialTheme.typography.labelLarge)
+                                Text(stringResource(range.labelRes), style = MaterialTheme.typography.labelLarge)
                             }
                         }
                     }
@@ -1184,15 +1055,15 @@ private fun PrivacyScreen(controller: BrowserController) {
         }
         Spacer(Modifier.height(14.dp))
         BrowserPanel(Modifier.fillMaxWidth()) {
-            Text("쿠키·캐시·사이트 데이터", style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.site_data_title), style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(8.dp))
-            Text("전체 삭제 시 시크릿 탭도 닫힙니다.",
+            Text(stringResource(R.string.site_data_private_notice),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(18.dp))
             Button(onClick = controller::requestClearSiteData,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = CircleShape) {
-                Text("사이트 데이터 전체 삭제")
+                Text(stringResource(R.string.clear_all_site_data))
             }
         }
     }
@@ -1204,37 +1075,43 @@ private fun SiteInfoScreen(ui: BrowserUiState) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
         .padding(horizontal = 16.dp, vertical = 12.dp)) {
         BrowserPanel(Modifier.fillMaxWidth()) {
-            Text(info?.url?.let(AddressResolver::displayUrl) ?: "페이지 정보 없음",
+            Text(info?.url?.let(AddressResolver::displayUrl) ?: stringResource(R.string.page_info_missing),
                 style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(12.dp))
-            Text(if (info?.url?.startsWith("https://") == true) "HTTPS 주소" else "HTTP 또는 기타 주소",
+            Text(stringResource(if (info?.url?.startsWith("https://") == true)
+                R.string.https_address else R.string.http_other_address),
                 color = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.height(6.dp))
-            Text("WebView는 현재 연결의 완전한 보안 상태를 제공하지 않습니다.",
+            Text(stringResource(R.string.site_security_limited),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(14.dp))
         BrowserPanel(Modifier.fillMaxWidth()) {
-            Text("인증서 정보", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.certificate_info),
+                style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(12.dp))
-            Text("대상: ${info?.subject ?: "정보 없음"}")
+            Text(stringResource(R.string.certificate_subject,
+                info?.subject ?: stringResource(R.string.certificate_unknown)))
             Spacer(Modifier.height(8.dp))
-            Text("발급 기관: ${info?.issuer ?: "정보 없음"}")
+            Text(stringResource(R.string.certificate_issuer,
+                info?.issuer ?: stringResource(R.string.certificate_unknown)))
             info?.validFrom?.let {
                 Spacer(Modifier.height(8.dp))
-                Text("유효 기간 시작: ${DateFormat.getDateTimeInstance().format(Date(it))}")
+                Text(stringResource(R.string.certificate_valid_from,
+                    DateFormat.getDateTimeInstance().format(Date(it))))
             }
             info?.validTo?.let {
                 Spacer(Modifier.height(8.dp))
-                Text("유효 기간 종료: ${DateFormat.getDateTimeInstance().format(Date(it))}")
+                Text(stringResource(R.string.certificate_valid_to,
+                    DateFormat.getDateTimeInstance().format(Date(it))))
             }
         }
         Spacer(Modifier.height(14.dp))
         BrowserPanel(Modifier.fillMaxWidth()) {
-            Text("사이트 권한", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.site_permissions), style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
-            Text("카메라·마이크·위치는 요청할 때마다 확인합니다.",
+            Text(stringResource(R.string.site_permissions_notice),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -1246,15 +1123,22 @@ private fun BrowserDialogView(dialog: BrowserDialog, controller: BrowserControll
     var prompt by remember(dialog) {
         mutableStateOf((dialog as? BrowserDialog.JavaScript)?.defaultValue.orEmpty())
     }
+    val permissionNames = mapOf(
+        com.kotlinsun.current.engine.WebPermissionKind.CAMERA to stringResource(R.string.permission_camera),
+        com.kotlinsun.current.engine.WebPermissionKind.MICROPHONE to stringResource(R.string.permission_microphone),
+        com.kotlinsun.current.engine.WebPermissionKind.LOCATION to stringResource(R.string.permission_location),
+        com.kotlinsun.current.engine.WebPermissionKind.PROTECTED_MEDIA to
+            stringResource(R.string.permission_protected_media),
+    )
     val title = when (dialog) {
-        is BrowserDialog.Notice -> "알림"
+        is BrowserDialog.Notice -> stringResource(R.string.dialog_notice)
         is BrowserDialog.JavaScript -> dialog.origin
-        is BrowserDialog.Permission -> "사이트 권한 요청"
-        is BrowserDialog.Download -> "파일 다운로드"
-        is BrowserDialog.DeleteDownload -> "다운로드 삭제"
-        is BrowserDialog.DeleteLocalDownload -> "다운로드 삭제"
-        is BrowserDialog.HttpNavigation -> "안전하지 않은 연결"
-        BrowserDialog.ClearSiteData -> "사이트 데이터 삭제"
+        is BrowserDialog.Permission -> stringResource(R.string.dialog_permission)
+        is BrowserDialog.Download -> stringResource(R.string.dialog_download)
+        is BrowserDialog.DeleteDownload, is BrowserDialog.DeleteLocalDownload ->
+            stringResource(R.string.dialog_download_delete)
+        is BrowserDialog.HttpNavigation -> stringResource(R.string.dialog_http)
+        BrowserDialog.ClearSiteData -> stringResource(R.string.dialog_site_data)
     }
     AlertDialog(onDismissRequest = controller::cancelDialog,
         shape = RoundedCornerShape(28.dp),
@@ -1267,40 +1151,43 @@ private fun BrowserDialogView(dialog: BrowserDialog, controller: BrowserControll
                 is BrowserDialog.JavaScript -> Column {
                     Text(dialog.message)
                     if (dialog.kind == JavaScriptDialogKind.PROMPT) OutlinedTextField(
-                        prompt, { prompt = it }, label = { Text("응답") },
+                        prompt, { prompt = it },
+                        label = { Text(stringResource(R.string.dialog_response)) },
                         modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp))
                 }
-                is BrowserDialog.Permission -> Text(dialog.origin + "에서 " +
-                    dialog.kinds.joinToString {
-                        when (it) {
-                            com.kotlinsun.current.engine.WebPermissionKind.CAMERA -> "카메라"
-                            com.kotlinsun.current.engine.WebPermissionKind.MICROPHONE -> "마이크"
-                            com.kotlinsun.current.engine.WebPermissionKind.LOCATION -> "위치"
-                            com.kotlinsun.current.engine.WebPermissionKind.PROTECTED_MEDIA -> "보호 미디어"
-                        }
-                    } + " 사용을 요청합니다.")
+                is BrowserDialog.Permission -> Text(stringResource(R.string.permission_request,
+                    dialog.origin, dialog.kinds.joinToString { permissionNames[it].orEmpty() }))
                 is BrowserDialog.Download -> Text(dialog.fileName + "\n" + dialog.url +
-                    "\n파일은 기기의 Downloads 폴더에 남습니다." +
-                    if (dialog.privateMode) "\n시크릿 다운로드에는 로그인 쿠키를 전달하지 않습니다." else "")
-                is BrowserDialog.DeleteDownload -> Text(dialog.fileName + " 파일과 목록 기록을 삭제합니다.")
-                is BrowserDialog.DeleteLocalDownload -> Text(dialog.fileName + " 파일과 목록 기록을 삭제합니다.")
-                is BrowserDialog.HttpNavigation -> Text(AddressResolver.displayUrl(dialog.url) +
-                    "\nHTTP 연결은 암호화되지 않습니다. 이 주소를 계속 열까요?")
-                BrowserDialog.ClearSiteData -> Text("모든 쿠키·캐시·사이트 데이터를 삭제하고 시크릿 탭을 닫습니다.")
+                    "\n" + stringResource(R.string.download_location_notice) +
+                    if (dialog.privateMode) "\n" + stringResource(R.string.private_download_notice) else "")
+                is BrowserDialog.DeleteDownload -> Text(stringResource(R.string.delete_download_notice,
+                    dialog.fileName))
+                is BrowserDialog.DeleteLocalDownload -> Text(stringResource(
+                    R.string.delete_local_download_notice, dialog.fileName))
+                is BrowserDialog.HttpNavigation -> Text(stringResource(R.string.http_navigation_notice,
+                    AddressResolver.displayUrl(dialog.url)))
+                BrowserDialog.ClearSiteData -> Text(stringResource(R.string.clear_site_data_notice))
             }
         },
         confirmButton = { TextButton(onClick = {
             controller.confirmDialog(if (dialog is BrowserDialog.JavaScript &&
                 dialog.kind == JavaScriptDialogKind.PROMPT) prompt else null)
         }, modifier = Modifier.heightIn(min = 48.dp)) { Text(when (dialog) {
-            is BrowserDialog.Notice -> "확인"
-            is BrowserDialog.HttpNavigation -> "계속 열기"
-            else -> "허용·실행"
+            is BrowserDialog.Notice -> stringResource(R.string.dialog_confirm)
+            is BrowserDialog.Permission -> stringResource(R.string.dialog_allow)
+            is BrowserDialog.Download -> stringResource(R.string.downloads)
+            is BrowserDialog.DeleteDownload, is BrowserDialog.DeleteLocalDownload ->
+                stringResource(R.string.delete)
+            BrowserDialog.ClearSiteData -> stringResource(R.string.dialog_delete_all)
+            is BrowserDialog.HttpNavigation -> stringResource(R.string.dialog_continue)
+            is BrowserDialog.JavaScript -> stringResource(R.string.dialog_confirm)
         }) } },
         dismissButton = {
             if (dialog !is BrowserDialog.Notice && !(dialog is BrowserDialog.JavaScript &&
                     dialog.kind == JavaScriptDialogKind.ALERT))
                 TextButton(onClick = controller::cancelDialog,
-                    modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") }
+                    modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.cancel))
+                }
         })
 }

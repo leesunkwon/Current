@@ -1,0 +1,18 @@
+<resources>
+    <string name="engine_server_error">서버 오류 %1$d</string>
+    <string name="engine_ssl_error">보안 연결을 확인할 수 없습니다.</string>
+    <string name="engine_unsafe_site">안전하지 않은 사이트가 차단되었습니다.</string>
+    <string name="engine_web_page">웹 페이지</string>
+    <string name="engine_blob_timeout">파일 전송 시간이 초과되었습니다.</string>
+    <string name="engine_blob_page_changed">페이지가 바뀌어 다운로드를 중단했습니다.</string>
+    <string name="engine_blob_data_error">파일 데이터를 확인할 수 없습니다.</string>
+    <string name="engine_blob_size_error">파일 크기 제한을 초과했습니다.</string>
+    <string name="engine_blob_save_error">파일을 저장하지 못했습니다.</string>
+    <string name="engine_blob_incomplete">파일이 완전히 전달되지 않았습니다.</string>
+    <string name="engine_blob_20mib_limit">파일 크기가 20MiB 제한을 초과했습니다.</string>
+    <string name="engine_blob_page_read_error">페이지에서 파일을 읽지 못했습니다.</string>
+    <string name="engine_blob_tab_closed">탭이 닫혀 파일을 받을 수 없습니다.</string>
+    <string name="engine_blob_unsupported">이 기기의 WebView는 blob 다운로드를 지원하지 않습니다.</string>
+    <string name="engine_blob_https_only">보안 연결(HTTPS)의 활성 페이지에서만 blob 파일을 받을 수 있습니다.</string>
+    <string name="engine_blob_other_origin">다른 출처의 blob 파일은 받을 수 없습니다.</string>
+</resources>

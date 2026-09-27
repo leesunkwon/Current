@@ -68,9 +68,6 @@ interface HistoryDao {
     @Query("SELECT * FROM history ORDER BY visitedAt DESC")
     suspend fun getAll(): List<HistoryRecord>
 
-    @Query("SELECT * FROM history WHERE visitedAt >= :since AND (url LIKE '%' || :query || '%' OR title LIKE '%' || :query || '%') ORDER BY visitedAt DESC LIMIT 30")
-    suspend fun search(query: String, since: Long): List<HistoryRecord>
-
     @Query("SELECT h.url AS url, COALESCE((SELECT latest.title FROM history AS latest WHERE latest.url = h.url ORDER BY latest.visitedAt DESC LIMIT 1), h.url) AS title, COUNT(*) AS visitCount, MAX(h.visitedAt) AS lastVisited FROM history AS h WHERE h.url LIKE 'http%' AND h.visitedAt >= :since GROUP BY h.url ORDER BY visitCount DESC, lastVisited DESC LIMIT 40")
     suspend fun topSites(since: Long): List<TopSiteRecord>
 
@@ -378,7 +375,6 @@ class BrowserStore private constructor(context: Context) {
     }
 
     suspend fun loadHistory(): List<HistoryRecord> = database.historyDao().getAll()
-    suspend fun searchHistory(query: String, since: Long): List<HistoryRecord> = database.historyDao().search(query, since)
     suspend fun loadTopSites(since: Long): List<TopSiteRecord> = database.historyDao().topSites(since)
     suspend fun addVisit(record: HistoryRecord) = database.historyDao().insert(record)
     suspend fun updateVisit(url: String, title: String, favicon: ByteArray?) =
