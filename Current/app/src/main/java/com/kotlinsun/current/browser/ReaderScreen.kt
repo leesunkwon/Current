@@ -37,8 +37,29 @@ private val languages = listOf("ko" to R.string.reader_language_ko,
     "zh" to R.string.reader_language_zh, "es" to R.string.reader_language_es,
     "fr" to R.string.reader_language_fr)
 
+internal class ReaderActions(
+    val setSpeechLanguage: (String) -> Unit = {},
+    val toggleSpeech: () -> Unit = {},
+    val resumeSpeech: () -> Unit = {},
+    val pauseSpeech: () -> Unit = {},
+    val translate: (String) -> Unit = {},
+    val showOriginal: () -> Unit = {},
+)
+
 @Composable
 internal fun ReaderScreen(ui: BrowserUiState, controller: BrowserController) {
+    ReaderScreenContent(ui, ReaderActions(
+        setSpeechLanguage = controller::setReaderSpeechLanguage,
+        toggleSpeech = controller::toggleReaderSpeech,
+        resumeSpeech = controller::resumeReaderSpeech,
+        pauseSpeech = controller::pauseReaderSpeech,
+        translate = controller::translateReader,
+        showOriginal = controller::showOriginalReader,
+    ))
+}
+
+@Composable
+internal fun ReaderScreenContent(ui: BrowserUiState, actions: ReaderActions) {
     val page = ui.readerPage ?: return
     val original = page.blocks.ifEmpty {
         page.text.split(Regex("\\n\\s*\\n")).filter { it.isNotBlank() }
@@ -71,20 +92,20 @@ internal fun ReaderScreen(ui: BrowserUiState, controller: BrowserController) {
                             languages.forEach { (tag, label) ->
                                 DropdownMenuItem(text = { Text(stringResource(label)) }, onClick = {
                                     speechMenu = false
-                                    controller.setReaderSpeechLanguage(tag)
+                                    actions.setSpeechLanguage(tag)
                                 })
                             }
                         }
                     }
                 }
-                Button(onClick = controller::toggleReaderSpeech,
+                Button(onClick = actions.toggleSpeech,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Text(stringResource(if (ui.readerSpeaking) R.string.reader_stop_speech
                         else R.string.reader_start_speech))
                 }
                 if (ui.readerSpeaking) TextButton(
-                    onClick = if (ui.readerSpeechPaused) controller::resumeReaderSpeech
-                        else controller::pauseReaderSpeech,
+                    onClick = if (ui.readerSpeechPaused) actions.resumeSpeech
+                        else actions.pauseSpeech,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Text(stringResource(if (ui.readerSpeechPaused) R.string.reader_resume_speech
                         else R.string.reader_pause_speech))
@@ -101,16 +122,16 @@ internal fun ReaderScreen(ui: BrowserUiState, controller: BrowserController) {
                             languages.forEach { (tag, label) ->
                                 DropdownMenuItem(text = { Text(stringResource(label)) }, onClick = {
                                     translationMenu = false
-                                    controller.translateReader(tag)
+                                    actions.translate(tag)
                                 })
                             }
                         }
                     }
-                    if (ui.readerTranslating) TextButton(onClick = controller::showOriginalReader,
+                    if (ui.readerTranslating) TextButton(onClick = actions.showOriginal,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                         Text(stringResource(R.string.cancel))
                     }
-                } else TextButton(onClick = controller::showOriginalReader,
+                } else TextButton(onClick = actions.showOriginal,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Text(stringResource(R.string.reader_show_original))
                 }

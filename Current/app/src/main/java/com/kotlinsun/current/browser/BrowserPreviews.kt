@@ -14,6 +14,8 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.kotlinsun.current.R
+import com.kotlinsun.current.engine.ReadableBlock
+import com.kotlinsun.current.engine.ReadablePage
 import com.kotlinsun.current.engine.TabMode
 import com.kotlinsun.current.ui.theme.CurrentTheme
 
@@ -28,6 +30,15 @@ private fun previewTab(mode: TabMode) = BrowserTab(
     mode = mode,
     title = "새 탭",
 )
+
+@Composable
+private fun PreviewSurface(darkTheme: Boolean, content: @Composable () -> Unit) {
+    CurrentTheme(darkTheme = darkTheme) {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            content()
+        }
+    }
+}
 
 @Composable
 private fun PreviewNewTab(darkTheme: Boolean, mode: TabMode) {
@@ -107,3 +118,82 @@ private fun AddressFieldPreview() {
         }
     }
 }
+
+private val previewOpenTabs = listOf(
+    BrowserTab("preview-current", url = "https://developer.android.com",
+        title = "Android Developers", pinned = true),
+    BrowserTab("preview-guide", url = "https://www.example.com/guide",
+        title = "읽을거리", groupName = "참고 자료"),
+    previewTab(TabMode.NORMAL).copy(id = "preview-empty"),
+)
+
+@Composable
+private fun PreviewTabs(darkTheme: Boolean) {
+    val ui = BrowserUiState(tabs = previewOpenTabs, selectedNormalId = "preview-current",
+        privateAvailable = true,
+        closedTabs = listOf(ClosedTabSummary("preview-closed", "이전에 닫은 페이지",
+            "https://www.example.com/closed")))
+    PreviewSurface(darkTheme) { TabSwitcherContent(ui, TabSwitcherActions()) }
+}
+
+@Preview(name = "탭 목록 · 밝음", showBackground = true, widthDp = 393, heightDp = 852)
+@Composable
+private fun TabsLightPreview() = PreviewTabs(darkTheme = false)
+
+@Preview(name = "탭 목록 · 어두움", showBackground = true, widthDp = 393, heightDp = 852)
+@Composable
+private fun TabsDarkPreview() = PreviewTabs(darkTheme = true)
+
+@Preview(name = "탭 목록 · 큰 글꼴", showBackground = true, widthDp = 360,
+    heightDp = 720, fontScale = 1.5f)
+@Composable
+private fun TabsLargeTextPreview() = PreviewTabs(darkTheme = false)
+
+@Composable
+private fun PreviewSettings(darkTheme: Boolean) {
+    val ui = BrowserUiState(themeChoice = if (darkTheme) ThemeChoice.DARK else ThemeChoice.LIGHT,
+        textZoom = 125, privateLockAvailable = true, defaultBrowser = false)
+    PreviewSurface(darkTheme) { SettingsScreenContent(ui, SettingsActions()) }
+}
+
+@Preview(name = "설정 · 밝음", showBackground = true, widthDp = 393, heightDp = 852)
+@Composable
+private fun SettingsLightPreview() = PreviewSettings(darkTheme = false)
+
+@Preview(name = "설정 · 어두움", showBackground = true, widthDp = 393, heightDp = 852)
+@Composable
+private fun SettingsDarkPreview() = PreviewSettings(darkTheme = true)
+
+@Preview(name = "설정 · 큰 글꼴", showBackground = true, widthDp = 360,
+    heightDp = 720, fontScale = 1.5f)
+@Composable
+private fun SettingsLargeTextPreview() = PreviewSettings(darkTheme = false)
+
+@Composable
+private fun PreviewReader(darkTheme: Boolean) {
+    val page = ReadablePage(url = "https://www.example.com/article",
+        title = "읽기 화면의 예시 글",
+        text = "브라우저에서 긴 글을 읽는 예시입니다.",
+        blocks = listOf(
+            ReadableBlock("좋아하는 글을 편안하게 읽어 보세요.", heading = true),
+            ReadableBlock("읽기 모드는 페이지 본문에 집중할 수 있도록 내용을 정리합니다. " +
+                "글꼴을 크게 설정해도 문단이 화면 너비에 맞춰 표시됩니다."),
+            ReadableBlock("음성 읽기와 기기 내 번역은 사용자가 직접 시작할 수 있습니다."),
+        ), language = "ko")
+    PreviewSurface(darkTheme) {
+        ReaderScreenContent(BrowserUiState(readerPage = page), ReaderActions())
+    }
+}
+
+@Preview(name = "읽기 · 밝음", showBackground = true, widthDp = 393, heightDp = 852)
+@Composable
+private fun ReaderLightPreview() = PreviewReader(darkTheme = false)
+
+@Preview(name = "읽기 · 어두움", showBackground = true, widthDp = 393, heightDp = 852)
+@Composable
+private fun ReaderDarkPreview() = PreviewReader(darkTheme = true)
+
+@Preview(name = "읽기 · 큰 글꼴", showBackground = true, widthDp = 360,
+    heightDp = 720, fontScale = 1.5f)
+@Composable
+private fun ReaderLargeTextPreview() = PreviewReader(darkTheme = false)

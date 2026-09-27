@@ -34,7 +34,6 @@ import android.security.KeyChainAliasCallback
 import android.provider.Settings
 import android.util.Rational
 import android.provider.MediaStore
-import android.webkit.MimeTypeMap
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.PredictiveBackHandler
@@ -119,16 +118,8 @@ class MainActivity : ComponentActivity(), BrowserHost {
         controller.fileResultFinished()
         val request = pendingFile
         pendingFile = null
-        val uris = if (result.resultCode == Activity.RESULT_OK) {
-            val values = mutableListOf<Uri>()
-            result.data?.clipData?.let { clips ->
-                for (index in 0 until clips.itemCount) values.add(clips.getItemAt(index).uri)
-            }
-            result.data?.data?.let(values::add)
-            if (values.isEmpty()) cameraUri?.let(values::add)
-            values.distinct().filter(::isReadableContentUri).take(if (request?.allowMultiple == true) 20 else 1)
-                .takeIf { it.isNotEmpty() }?.toTypedArray()
-        } else null
+        val uris = if (result.resultCode == Activity.RESULT_OK)
+            WebFileChooser.selectedUris(this, result.data, cameraUri, request) else null
         clearCameraCapture(keepFile = request != null && cameraUri?.let { capture ->
             uris?.any { it == capture }
         } == true)
@@ -159,6 +150,8 @@ class MainActivity : ComponentActivity(), BrowserHost {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        filePickerInFlight = savedInstanceState?.getBoolean("file_picker_in_flight") == true
+        permissionPromptInFlight = savedInstanceState?.getBoolean("permission_prompt_in_flight") == true
         enableEdgeToEdge()
         controller = ViewModelProvider(this)[BrowserViewModel::class.java].controller
         File(cacheDir, "upload_capture").listFiles()?.filter {
@@ -315,6 +308,12 @@ class MainActivity : ComponentActivity(), BrowserHost {
         super.onDestroy()
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("file_picker_in_flight", filePickerInFlight)
+        outState.putBoolean("permission_prompt_in_flight", permissionPromptInFlight)
+        super.onSaveInstanceState(outState)
+    }
+
     override fun launchFileSelection(request: FileSelectionRequest) {
         if (filePickerInFlight || controller.awaitingFileResult) {
             request.complete(null)
@@ -323,18 +322,8 @@ class MainActivity : ComponentActivity(), BrowserHost {
         }
         cancelFileSelection()
         pendingFile = request
-        val accepted = request.acceptTypes.flatMap { it.split(',') }.mapNotNull { raw ->
-            val value = raw.trim().lowercase()
-            when {
-                value.startsWith('.') -> MimeTypeMap.getSingleton()
-                    .getMimeTypeFromExtension(value.drop(1))
-                value.contains('/') && !value.contains(' ') -> value
-                else -> null
-            }
-        }.distinct().toTypedArray()
-        val cameraEligible = request.capture || accepted.any {
-            it.startsWith("image/") || it.startsWith("video/")
-        }
+        val accepted = WebFileChooser.mimeTypes(request).toTypedArray()
+        val cameraEligible = WebFileChooser.cameraEligible(request)
         if (pendingPermissions != null) {
             showFileChooser(request, accepted, false)
         } else if (cameraEligible && ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
@@ -346,13 +335,7 @@ class MainActivity : ComponentActivity(), BrowserHost {
     }
 
     private fun showFileChooser(request: FileSelectionRequest, accepted: Array<String>, allowCamera: Boolean) {
-        val picker = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = if (accepted.size == 1) accepted[0] else "*/*"
-            if (accepted.size > 1) putExtra(Intent.EXTRA_MIME_TYPES, accepted)
-            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, request.allowMultiple)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
+        val picker = WebFileChooser.picker(request, accepted.toList())
         val hasImage = accepted.any { it.startsWith("image/") }
         val hasVideo = accepted.any { it.startsWith("video/") }
         if (allowCamera && hasImage && hasVideo) {
@@ -477,12 +460,6 @@ class MainActivity : ComponentActivity(), BrowserHost {
                 getString(R.string.capture_file), uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         }
-    }
-
-    private fun isReadableContentUri(uri: Uri): Boolean {
-        if (uri.scheme != "content") return false
-        return runCatching { contentResolver.openAssetFileDescriptor(uri, "r")?.use { true } ?: false }
-            .getOrDefault(false)
     }
 
     override fun requestPermissions(permissions: Array<String>, callback: (Boolean) -> Unit) {

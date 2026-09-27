@@ -142,6 +142,33 @@ internal fun TabletTabStrip(ui: BrowserUiState, controller: BrowserController) {
 
 @Composable
 internal fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
+    SettingsScreenContent(ui, SettingsActions(
+        saveHomePage = controller::saveHomePage,
+        changeSearchEngine = controller::changeSearchEngine,
+        changeTheme = controller::changeTheme,
+        changeTextZoom = controller::changeTextZoom,
+        changeThirdPartyCookies = controller::changeThirdPartyCookies,
+        changeTrackingProtection = controller::changeTrackingProtection,
+        requestDefaultBrowser = controller::requestDefaultBrowser,
+        showPrivacy = { controller.showPage(BrowserPage.PRIVACY) },
+        showSitePermissions = { controller.showPage(BrowserPage.SITE_PERMISSIONS) },
+    ))
+}
+
+internal class SettingsActions(
+    val saveHomePage: (String) -> Boolean = { true },
+    val changeSearchEngine: (SearchEngine) -> Unit = {},
+    val changeTheme: (ThemeChoice) -> Unit = {},
+    val changeTextZoom: (Int) -> Unit = {},
+    val changeThirdPartyCookies: (Boolean) -> Unit = {},
+    val changeTrackingProtection: (Boolean) -> Unit = {},
+    val requestDefaultBrowser: () -> Unit = {},
+    val showPrivacy: () -> Unit = {},
+    val showSitePermissions: () -> Unit = {},
+)
+
+@Composable
+internal fun SettingsScreenContent(ui: BrowserUiState, actions: SettingsActions) {
     val context = LocalContext.current
     var homeEditorOpen by remember { mutableStateOf(false) }
     var homeInput by remember(ui.homePageUrl) { mutableStateOf(ui.homePageUrl.orEmpty()) }
@@ -160,7 +187,7 @@ internal fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
                 color = MaterialTheme.colorScheme.error)
         } },
         confirmButton = { Button(onClick = {
-            if (controller.saveHomePage(homeInput)) homeEditorOpen = false else homeInvalid = true
+            if (actions.saveHomePage(homeInput)) homeEditorOpen = false else homeInvalid = true
         }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.save)) } },
         dismissButton = { BrowserTextButton(onClick = { homeEditorOpen = false },
             modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.cancel)) } })
@@ -176,7 +203,7 @@ internal fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
                 Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
                     .clickable(onClickLabel = context.getString(R.string.search_engine_select,
                         engine.label)) {
-                        controller.changeSearchEngine(engine)
+                        actions.changeSearchEngine(engine)
                     }.semantics { stateDescription = if (ui.searchEngine == engine)
                         contextSelected else contextNotSelected },
                     verticalAlignment = Alignment.CenterVertically) {
@@ -193,7 +220,7 @@ internal fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ThemeChoice.entries.forEach { choice ->
                     ChoicePill(stringResource(choice.labelRes), ui.themeChoice == choice,
-                        { controller.changeTheme(choice) }, modifier = Modifier.widthIn(min = 84.dp))
+                        { actions.changeTheme(choice) }, modifier = Modifier.widthIn(min = 84.dp))
                 }
             }
             Spacer(Modifier.height(22.dp))
@@ -204,7 +231,7 @@ internal fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
                 horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 listOf(100, 125, 150, 200).forEach { amount ->
                     ChoicePill("$amount%", ui.textZoom == amount,
-                        { controller.changeTextZoom(amount) }, modifier = Modifier.widthIn(min = 76.dp))
+                        { actions.changeTextZoom(amount) }, modifier = Modifier.widthIn(min = 76.dp))
                 }
             }
         }
@@ -241,7 +268,7 @@ internal fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
                         contentDescription = context.getString(R.string.third_party_cookies)
                     },
                     enabled = ui.activeMode == TabMode.NORMAL,
-                    onCheckedChange = controller::changeThirdPartyCookies)
+                    onCheckedChange = actions.changeThirdPartyCookies)
             }
         }
         Spacer(Modifier.height(14.dp))
@@ -255,7 +282,7 @@ internal fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(checked = ui.trackingProtection,
-                    onCheckedChange = controller::changeTrackingProtection,
+                    onCheckedChange = actions.changeTrackingProtection,
                     modifier = Modifier.semantics {
                         contentDescription = context.getString(R.string.tracking_protection)
                     })
@@ -271,7 +298,7 @@ internal fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
         BrowserPanel {
             Row(Modifier.fillMaxWidth().heightIn(min = 52.dp)
                 .clickable(onClickLabel = context.getString(R.string.default_browser_action)) {
-                    controller.requestDefaultBrowser()
+                    actions.requestDefaultBrowser()
                 },
                 verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(if (ui.defaultBrowser == true)
@@ -282,14 +309,14 @@ internal fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             Row(Modifier.fillMaxWidth().heightIn(min = 52.dp)
                 .clickable(onClickLabel = context.getString(R.string.open_privacy_clear)) {
-                    controller.showPage(BrowserPage.PRIVACY)
+                    actions.showPrivacy()
                 }, verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.privacy_clear), modifier = Modifier.weight(1f))
                 Text("›", color = MaterialTheme.colorScheme.primary)
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             Row(Modifier.fillMaxWidth().heightIn(min = 52.dp)
-                .clickable { controller.showPage(BrowserPage.SITE_PERMISSIONS) },
+                .clickable { actions.showSitePermissions() },
                 verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.site_permissions), modifier = Modifier.weight(1f))
                 Text("›", color = MaterialTheme.colorScheme.primary)
@@ -301,6 +328,39 @@ internal fun SettingsScreen(ui: BrowserUiState, controller: BrowserController) {
 
 @Composable
 internal fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
+    TabSwitcherContent(ui, TabSwitcherActions(
+        setTabGroup = controller::setTabGroup,
+        ungroupTabs = controller::ungroupTabs,
+        renameTabGroup = controller::renameTabGroup,
+        switchMode = controller::switchMode,
+        closeAllTabs = controller::closeAllTabs,
+        newTab = { mode -> controller.newTab(mode = mode) },
+        closeDuplicateTabs = controller::closeDuplicateTabs,
+        selectTab = controller::selectTab,
+        closeTab = controller::closeTab,
+        toggleTabPinned = controller::toggleTabPinned,
+        moveTab = controller::moveTab,
+        reopenClosedTab = { id -> controller.reopenClosedTab(id) },
+    ))
+}
+
+internal class TabSwitcherActions(
+    val setTabGroup: (String, String) -> Unit = { _, _ -> },
+    val ungroupTabs: (String) -> Unit = {},
+    val renameTabGroup: (String, String) -> Unit = { _, _ -> },
+    val switchMode: (TabMode) -> Unit = {},
+    val closeAllTabs: () -> Unit = {},
+    val newTab: (TabMode) -> Unit = {},
+    val closeDuplicateTabs: () -> Unit = {},
+    val selectTab: (String) -> Unit = {},
+    val closeTab: (String) -> Unit = {},
+    val toggleTabPinned: (String) -> Unit = {},
+    val moveTab: (String, Int) -> Unit = { _, _ -> },
+    val reopenClosedTab: (String) -> Unit = {},
+)
+
+@Composable
+internal fun TabSwitcherContent(ui: BrowserUiState, actions: TabSwitcherActions) {
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     var groupFilter by remember(ui.activeMode) { mutableStateOf<String?>(null) }
@@ -333,14 +393,14 @@ internal fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp))
                 }
                 if (tab.groupName != null) BrowserTextButton(onClick = {
-                    controller.setTabGroup(tab.id, "")
+                    actions.setTabGroup(tab.id, "")
                     groupingTab = null
                 }, modifier = Modifier.heightIn(min = 48.dp)) {
                     Text(stringResource(R.string.tab_group_remove))
                 }
             } },
             confirmButton = { Button(onClick = {
-                controller.setTabGroup(tab.id, groupInput)
+                actions.setTabGroup(tab.id, groupInput)
                 groupingTab = null
             }, enabled = groupInput.isNotBlank(), shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.heightIn(min = 48.dp)) {
@@ -359,7 +419,7 @@ internal fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                     label = { Text(stringResource(R.string.tab_group_name)) },
                     modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
                 BrowserTextButton(onClick = {
-                    controller.ungroupTabs(old)
+                    actions.ungroupTabs(old)
                     groupFilter = null
                     renamingGroup = null
                 }, modifier = Modifier.heightIn(min = 48.dp)) {
@@ -367,7 +427,7 @@ internal fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                 }
             } },
             confirmButton = { Button(onClick = {
-                controller.renameTabGroup(old, groupInput)
+                actions.renameTabGroup(old, groupInput)
                 groupFilter = groupInput.trim().take(32)
                 renamingGroup = null
             }, enabled = groupInput.isNotBlank(), shape = MaterialTheme.shapes.medium,
@@ -384,11 +444,11 @@ internal fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ChoicePill(stringResource(R.string.normal_tab_label,
                 ui.tabs.count { it.mode == TabMode.NORMAL }),
-                ui.activeMode == TabMode.NORMAL, { controller.switchMode(TabMode.NORMAL) },
+                ui.activeMode == TabMode.NORMAL, { actions.switchMode(TabMode.NORMAL) },
                 modifier = Modifier.weight(1f), pill = true)
             ChoicePill(stringResource(R.string.private_tab_label,
                 ui.tabs.count { it.mode == TabMode.PRIVATE }),
-                ui.activeMode == TabMode.PRIVATE, { controller.switchMode(TabMode.PRIVATE) },
+                ui.activeMode == TabMode.PRIVATE, { actions.switchMode(TabMode.PRIVATE) },
                 modifier = Modifier.weight(1f), enabled = ui.privateAvailable, pill = true)
         }
         ui.privateUnavailableReason?.let {
@@ -419,13 +479,13 @@ internal fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
             }
         }
         val tabActions: @Composable (Modifier, Modifier) -> Unit = { closeModifier, newModifier ->
-            BrowserTextButton(onClick = controller::closeAllTabs,
+            BrowserTextButton(onClick = actions.closeAllTabs,
                 modifier = closeModifier.heightIn(min = 48.dp).semantics {
                     contentDescription = closeAllDescription
                 }) {
                 Text(stringResource(R.string.close_all_tabs))
             }
-            BrowserTextButton(onClick = { controller.newTab(mode = ui.activeMode) },
+            BrowserTextButton(onClick = { actions.newTab(ui.activeMode) },
                 modifier = newModifier.heightIn(min = 48.dp)) {
                 Icon(Icons.Filled.Add, contentDescription = null)
                 Text(stringResource(R.string.new_tab))
@@ -442,7 +502,7 @@ internal fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                 tabActions(Modifier, Modifier)
             }
         }
-        if (duplicateCount > 0) BrowserTextButton(onClick = controller::closeDuplicateTabs,
+        if (duplicateCount > 0) BrowserTextButton(onClick = actions.closeDuplicateTabs,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
             Text(stringResource(R.string.tab_close_duplicates, duplicateCount))
         }
@@ -467,7 +527,7 @@ internal fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Row(Modifier.weight(1f).heightIn(min = 80.dp)
                             .clickable(onClickLabel = context.getString(R.string.tab_open, tab.title)) {
-                                controller.selectTab(tab.id)
+                                actions.selectTab(tab.id)
                             }.semantics {
                                 contentDescription = context.getString(R.string.tab_description,
                                     tabMode, tab.title, tabUrl)
@@ -494,7 +554,7 @@ internal fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                                     maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                         }
-                        IconButton(onClick = { controller.closeTab(tab.id) },
+                        IconButton(onClick = { actions.closeTab(tab.id) },
                             modifier = Modifier.size(48.dp)) {
                             Icon(Icons.Filled.Close,
                                 contentDescription = stringResource(R.string.tab_close, tab.title))
@@ -512,17 +572,17 @@ internal fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                         }, modifier = Modifier.heightIn(min = 48.dp)) {
                             Text(stringResource(R.string.tab_group_short))
                         }
-                        BrowserTextButton(onClick = { controller.toggleTabPinned(tab.id) },
+                        BrowserTextButton(onClick = { actions.toggleTabPinned(tab.id) },
                             modifier = Modifier.heightIn(min = 48.dp).semantics {
                                 contentDescription = context.getString(if (tab.pinned)
                                     R.string.tab_unpin else R.string.tab_pin, tab.title)
                             }) { Text(stringResource(if (tab.pinned)
                                 R.string.tab_unpin_short else R.string.tab_pin_short), maxLines = 1) }
-                        BrowserTextButton(onClick = { controller.moveTab(tab.id, -1) }, enabled = canUp,
+                        BrowserTextButton(onClick = { actions.moveTab(tab.id, -1) }, enabled = canUp,
                             modifier = Modifier.heightIn(min = 48.dp).semantics {
                                 contentDescription = context.getString(R.string.tab_move_up, tab.title)
                             }) { Text(stringResource(R.string.tab_move_up_short)) }
-                        BrowserTextButton(onClick = { controller.moveTab(tab.id, 1) }, enabled = canDown,
+                        BrowserTextButton(onClick = { actions.moveTab(tab.id, 1) }, enabled = canDown,
                             modifier = Modifier.heightIn(min = 48.dp).semantics {
                                 contentDescription = context.getString(R.string.tab_move_down, tab.title)
                             }) { Text(stringResource(R.string.tab_move_down_short)) }
@@ -538,7 +598,7 @@ internal fun TabSwitcher(ui: BrowserUiState, controller: BrowserController) {
                         style = MaterialTheme.typography.titleMedium)
                 }
                 items(ui.closedTabs.filter { it.url != null }, key = { "closed-" + it.id }) { closed ->
-                    Surface(onClick = { controller.reopenClosedTab(closed.id) },
+                    Surface(onClick = { actions.reopenClosedTab(closed.id) },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 58.dp),
                         shape = MaterialTheme.shapes.large,
                         color = MaterialTheme.colorScheme.surface,

@@ -14,7 +14,6 @@ import android.provider.MediaStore
 import android.security.KeyChain
 import android.security.KeyChainAliasCallback
 import android.view.ViewGroup
-import android.webkit.MimeTypeMap
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -140,7 +139,7 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
     private var runtimeInFlight = false
     private var runtimePermissions: Array<String> = emptyArray()
     private var clientCertificate: Owned<ClientCertificateRequest>? = null
-    private var activeBlob: Owned<PwaBlobDownload>? = null
+    private var activeBlob: Owned<BlobDownloadTask>? = null
     private val pendingPdf = mutableSetOf<Long>()
     private var receiverRegistered = false
     private var foreground = false
@@ -157,20 +156,8 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
         filePickerInFlight = false
         val pending = pendingFile
         pendingFile = null
-        val uris = if (result.resultCode == Activity.RESULT_OK && pending != null) {
-            val selected = buildList {
-                result.data?.data?.let { add(it) }
-                result.data?.clipData?.let { clips ->
-                    for (index in 0 until clips.itemCount) add(clips.getItemAt(index).uri)
-                }
-                if (isEmpty()) cameraUri?.let { add(it) }
-            }.distinct().filter { uri ->
-                uri.scheme == "content" && runCatching {
-                    contentResolver.openAssetFileDescriptor(uri, "r")?.use { true } == true
-                }.getOrDefault(false)
-            }.take(if (pending.value.allowMultiple) 20 else 1)
-            selected.takeIf { it.isNotEmpty() }?.toTypedArray()
-        } else null
+        val uris = if (result.resultCode == Activity.RESULT_OK)
+            WebFileChooser.selectedUris(this, result.data, cameraUri, pending?.value) else null
         clearCameraCapture(keepFile = uris?.any { it == cameraUri } == true)
         pending?.value?.complete(uris)
     }
@@ -199,6 +186,9 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        filePickerInFlight = savedInstanceState?.getBoolean("file_picker_in_flight") == true
+        runtimeInFlight = savedInstanceState?.getBoolean("runtime_permission_in_flight") == true
+        cameraPermissionInFlight = savedInstanceState?.getBoolean("camera_permission_in_flight") == true
         val start = intent.getStringExtra(EXTRA_START)
         val scope = intent.getStringExtra(EXTRA_SCOPE)
         if (start == null || scope == null || !PwaSupport.withinScope(start, scope)) {
@@ -453,14 +443,8 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
 
     private fun requestSitePermission(owner: String, request: WebPermissionRequest) {
         if (session(owner) == null || runtimeInFlight) { request.deny(); return }
-        val permissions = request.kinds.mapNotNull {
-            when (it) {
-                WebPermissionKind.CAMERA -> Manifest.permission.CAMERA
-                WebPermissionKind.MICROPHONE -> Manifest.permission.RECORD_AUDIO
-                WebPermissionKind.LOCATION -> Manifest.permission.ACCESS_COARSE_LOCATION
-                WebPermissionKind.PROTECTED_MEDIA -> null
-            }
-        }.distinct().filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
+        val permissions = SitePermissionCoordinator.androidPermissions(request.kinds)
+            .filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
         if (permissions.isEmpty()) { request.grant(); return }
         pendingRuntime = Owned(owner, request)
         runtimeInFlight = true
@@ -601,9 +585,7 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
         }
         val pending = Owned(sessionId, request)
         pendingFile = pending
-        val cameraEligible = request.capture || request.acceptTypes.any {
-            it.contains("image/") || it.contains("video/")
-        }
+        val cameraEligible = WebFileChooser.cameraEligible(request)
         if (cameraEligible && ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
             PackageManager.PERMISSION_GRANTED) {
             cameraPermissionInFlight = true
@@ -617,21 +599,8 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
     private fun launchFilePicker(pending: Owned<FileSelectionRequest>, allowCamera: Boolean) {
         if (pendingFile !== pending || session(pending.owner) == null) return
         val request = pending.value
-        val types = request.acceptTypes.flatMap { it.split(',') }.mapNotNull { raw ->
-            val value = raw.trim().lowercase()
-            when {
-                value.startsWith('.') -> MimeTypeMap.getSingleton().getMimeTypeFromExtension(value.drop(1))
-                value.contains('/') && !value.contains(' ') -> value
-                else -> null
-            }
-        }.distinct()
-        val picker = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = types.singleOrNull() ?: "*/*"
-            if (types.size > 1) putExtra(Intent.EXTRA_MIME_TYPES, types.toTypedArray())
-            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, request.allowMultiple)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
+        val types = WebFileChooser.mimeTypes(request)
+        val picker = WebFileChooser.picker(request, types)
         val image = types.isEmpty() || types.any { it == "*/*" || it.startsWith("image/") }
         val video = types.any { it.startsWith("video/") }
         if (allowCamera && image && video) {
@@ -720,8 +689,8 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
         if (activeBlob != null) {
             showNotice(getString(R.string.blob_transfer_start_error)); return
         }
-        lateinit var transfer: PwaBlobDownload
-        transfer = runCatching { PwaBlobDownload(this, store, source, request, name,
+        lateinit var transfer: BlobDownloadTask
+        transfer = runCatching { BlobDownloadTask(this, store, source, request, name,
             acceptedDangerous) { outcome ->
             if (activeBlob?.value === transfer) activeBlob = null
             if (!isFinishing && !isDestroyed) {
@@ -859,6 +828,9 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("current_url", currentUrl)
         outState.putLongArray("pending_pdf", pendingPdf.toLongArray())
+        outState.putBoolean("file_picker_in_flight", filePickerInFlight)
+        outState.putBoolean("runtime_permission_in_flight", runtimeInFlight)
+        outState.putBoolean("camera_permission_in_flight", cameraPermissionInFlight)
         super.onSaveInstanceState(outState)
     }
     override fun onDestroy() {

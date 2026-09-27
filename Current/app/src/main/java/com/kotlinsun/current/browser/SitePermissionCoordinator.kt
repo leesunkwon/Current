@@ -21,14 +21,7 @@ internal class SitePermissionCoordinator {
 
     fun approve(host: BrowserHost?, onResult: (Boolean) -> Unit = {}) {
         val request = pending ?: return
-        val permissions = request.kinds.mapNotNull {
-            when (it) {
-                WebPermissionKind.CAMERA -> Manifest.permission.CAMERA
-                WebPermissionKind.MICROPHONE -> Manifest.permission.RECORD_AUDIO
-                WebPermissionKind.LOCATION -> Manifest.permission.ACCESS_COARSE_LOCATION
-                WebPermissionKind.PROTECTED_MEDIA -> null
-            }
-        }.distinct().toTypedArray()
+        val permissions = androidPermissions(request.kinds).toTypedArray()
         if (permissions.isEmpty()) {
             pending = null
             request.grant()
@@ -61,6 +54,15 @@ internal class SitePermissionCoordinator {
     }
 
     companion object {
+        fun androidPermissions(kinds: Collection<WebPermissionKind>): List<String> = kinds.mapNotNull {
+            when (it) {
+                WebPermissionKind.CAMERA -> Manifest.permission.CAMERA
+                WebPermissionKind.MICROPHONE -> Manifest.permission.RECORD_AUDIO
+                WebPermissionKind.LOCATION -> Manifest.permission.ACCESS_COARSE_LOCATION
+                WebPermissionKind.PROTECTED_MEDIA -> null
+            }
+        }.distinct()
+
         fun canonicalOrigin(value: String): String? = runCatching {
             val uri = Uri.parse(value)
             val scheme = uri.scheme?.lowercase() ?: return@runCatching null

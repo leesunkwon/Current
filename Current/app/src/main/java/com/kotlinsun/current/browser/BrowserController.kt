@@ -3,17 +3,15 @@ package com.kotlinsun.current.browser
 import android.app.Activity
 import android.app.DownloadManager
 import android.content.Context
-import android.content.ContentValues
 import android.net.Uri
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.content.ComponentCallbacks2
 import android.webkit.WebView
 import android.print.PrintDocumentAdapter
-import android.provider.MediaStore
 import android.webkit.WebSettings
 import com.kotlinsun.current.R
+import com.kotlinsun.current.BlobDownloadTask
 import com.kotlinsun.current.PageShortcuts
 import com.kotlinsun.current.data.BookmarkRecord
 import com.kotlinsun.current.data.BookmarkFolderRecord
@@ -21,9 +19,6 @@ import com.kotlinsun.current.data.BrowserStore
 import com.kotlinsun.current.data.HistoryRecord
 import com.kotlinsun.current.data.LocalDownloadRecord
 import com.kotlinsun.current.data.SitePermissionRecord
-import com.kotlinsun.current.engine.BlobReceiver
-import com.kotlinsun.current.engine.BlobTransfer
-import com.kotlinsun.current.engine.BLOB_TRANSFER_CANCELLED
 import com.kotlinsun.current.engine.BrowserEngine
 import com.kotlinsun.current.engine.ClientCertificateRequest
 import com.kotlinsun.current.engine.DownloadRequest
@@ -55,8 +50,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.io.File
-import java.io.FileOutputStream
-import java.util.concurrent.atomic.AtomicBoolean
 
 interface BrowserHost {
     val activity: Activity
@@ -141,7 +134,7 @@ class BrowserController(
     private var pendingBookmarkImport: ParsedBookmarkBackup? = null
     private var pendingBookmarkPreview: BookmarkImportPreview? = null
     private var pendingHttpAction: (() -> Unit)? = null
-    private var activeBlob: Pair<String, BlobTransfer>? = null
+    private var activeBlob: Pair<String, BlobDownloadTask>? = null
     var awaitingFileResult = false
         private set
     var awaitingPermissionResult = false
@@ -1249,6 +1242,10 @@ class BrowserController(
     }
 
     private fun discardSession(id: String, save: Boolean) {
+        if (activeBlob?.first == id) {
+            activeBlob?.second?.cancel()
+            activeBlob = null
+        }
         restoreJobs.remove(id)?.cancel()
         sessionJobs.remove(id)?.cancel()
         val session = sessions.remove(id) ?: return
@@ -2024,127 +2021,35 @@ class BrowserController(
     private fun beginBlobDownload(id: String, request: DownloadRequest, name: String,
                                   dangerousAccepted: Boolean) {
         val session = sessions[id] ?: return
-        session.blobUnavailableReason(request.url)?.let { notice(it); return }
+        if (activeBlob != null) {
+            notice(context.getString(R.string.blob_transfer_start_error))
+            return
+        }
         val privateMode = tab(id)?.mode == TabMode.PRIVATE
-        val directory = File(context.cacheDir, "blob_transfers").apply { mkdirs() }
-        val temporary = runCatching { File.createTempFile("transfer-", ".tmp", directory) }
-            .getOrElse { notice(context.getString(R.string.temp_file_create_error)); return }
-        val cancelled = AtomicBoolean(false)
-        var handle: BlobTransfer? = null
-        fun release() {
-            if (handle != null && activeBlob?.second === handle) activeBlob = null
-        }
-        val receiver = object : BlobReceiver {
-            override fun onChunk(bytes: ByteArray, acknowledge: (Boolean) -> Unit) {
-                scope.launch(Dispatchers.IO) {
-                    val saved = !cancelled.get() && runCatching {
-                        FileOutputStream(temporary, true).use { it.write(bytes) }
-                    }.isSuccess
-                    if (cancelled.get()) temporary.delete()
-                    withContext(Dispatchers.Main) { acknowledge(saved && !cancelled.get()) }
-                }
-            }
-
-            override fun onComplete(mimeType: String?) {
-                if (cancelled.get()) return
-                scope.launch {
-                    val result = withContext(Dispatchers.IO) {
-                        try {
-                            runCatching {
-                                if (cancelled.get()) error(BLOB_TRANSFER_CANCELLED)
-                                val effectiveMime = mimeType?.takeIf { it.contains('/') }
-                                    ?: request.mimeType
-                                    ?: if (name.endsWith(".pdf", true)) "application/pdf"
-                                    else "application/octet-stream"
-                                if (!dangerousAccepted && DownloadSafety.isDangerous(name, effectiveMime))
-                                    error(context.getString(R.string.blob_dangerous_blocked))
-                                val values = ContentValues().apply {
-                                    put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-                                    put(MediaStore.MediaColumns.MIME_TYPE, effectiveMime)
-                                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/")
-                                    put(MediaStore.MediaColumns.IS_PENDING, 1)
-                                }
-                                val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                                    ?: error(context.getString(R.string.local_file_create_error))
-                                var recordId: Long? = null
-                                try {
-                                    context.contentResolver.openOutputStream(uri)?.use { output ->
-                                        temporary.inputStream().use { input ->
-                                            val buffer = ByteArray(64 * 1024)
-                                            while (true) {
-                                                if (cancelled.get()) error(BLOB_TRANSFER_CANCELLED)
-                                                val size = input.read(buffer)
-                                                if (size < 0) break
-                                                output.write(buffer, 0, size)
-                                            }
-                                        }
-                                    } ?: error(context.getString(R.string.local_file_open_error))
-                                    if (cancelled.get()) error(BLOB_TRANSFER_CANCELLED)
-                                    values.clear()
-                                    values.put(MediaStore.MediaColumns.IS_PENDING, 0)
-                                    if (context.contentResolver.update(uri, values, null, null) <= 0)
-                                        error(context.getString(R.string.local_file_save_incomplete))
-                                    if (cancelled.get()) error(BLOB_TRANSFER_CANCELLED)
-                                    if (!privateMode) recordId = store.addLocalDownload(LocalDownloadRecord(
-                                        url = request.url, fileName = name, mimeType = effectiveMime,
-                                        contentUri = uri.toString(), createdAt = System.currentTimeMillis()))
-                                    if (cancelled.get()) error(BLOB_TRANSFER_CANCELLED)
-                                    Triple(uri, recordId, effectiveMime)
-                                } catch (error: Exception) {
-                                    recordId?.let { runCatching { store.deleteLocalDownload(it) } }
-                                    runCatching { context.contentResolver.delete(uri, null, null) }
-                                    throw error
-                                }
-                            }
-                        } finally {
-                            temporary.delete()
-                        }
-                    }
-                    release()
-                    result.onSuccess { (uri, recordId, effectiveMime) ->
-                        if (cancelled.get()) scope.launch(Dispatchers.IO) {
-                            recordId?.let { runCatching { store.deleteLocalDownload(it) } }
-                            runCatching { context.contentResolver.delete(uri, null, null) }
-                        } else {
-                            refreshDownloads()
-                            if (effectiveMime.substringBefore(';').equals("application/pdf", true) && foreground)
-                                host?.openLocalFile(uri, effectiveMime, privateMode)
-                            else notice(context.getString(R.string.local_download_saved))
-                        }
-                    }.onFailure {
-                        if (!cancelled.get()) notice(context.getString(R.string.local_download_save_error,
-                            it.message ?: context.getString(R.string.download_generic_error)))
+        lateinit var transfer: BlobDownloadTask
+        transfer = runCatching {
+            BlobDownloadTask(context, store, session, request, name, dangerousAccepted,
+                recordDownload = !privateMode) { outcome ->
+                if (activeBlob?.second === transfer) activeBlob = null
+                when {
+                    outcome.error != null -> notice(outcome.error)
+                    outcome.uri != null -> {
+                        refreshDownloads()
+                        if (outcome.mimeType?.substringBefore(';')?.equals("application/pdf", true) == true &&
+                            foreground) host?.openLocalFile(outcome.uri, outcome.mimeType, privateMode)
+                        else notice(context.getString(R.string.local_download_saved))
                     }
                 }
             }
-
-            override fun onError(message: String) {
-                cancelled.set(true)
-                release()
-                temporary.delete()
-                if (message != BLOB_TRANSFER_CANCELLED) notice(message)
-            }
+        }.getOrElse {
+            notice(context.getString(R.string.temp_file_create_error))
+            return
         }
-        val transfer = runCatching { session.downloadBlob(request.url, 20L * 1024 * 1024, receiver) }
-            .getOrElse {
-                temporary.delete()
-                notice(context.getString(R.string.blob_transfer_start_error))
-                return
-            }
-        if (transfer == null || cancelled.get()) {
-            if (cancelled.get()) transfer?.cancel()
-            temporary.delete()
-            if (!cancelled.get()) notice(context.getString(R.string.blob_read_error))
-        } else {
-            val currentHandle = object : BlobTransfer {
-                override fun cancel() {
-                    cancelled.set(true)
-                    transfer.cancel()
-                    temporary.delete()
-                }
-            }
-            handle = currentHandle
-            activeBlob = id to currentHandle
+        activeBlob = id to transfer
+        runCatching { transfer.start() }.onFailure {
+            transfer.cancel()
+            if (activeBlob?.second === transfer) activeBlob = null
+            notice(context.getString(R.string.blob_transfer_start_error))
         }
     }
 

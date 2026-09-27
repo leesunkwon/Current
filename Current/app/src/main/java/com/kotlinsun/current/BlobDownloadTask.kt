@@ -23,14 +23,15 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** A single confirmed PWA blob transfer, bounded by the engine to 20 MiB. */
-internal class PwaBlobDownload(
+/** A confirmed blob transfer shared by browser tabs and standalone web apps. */
+internal class BlobDownloadTask(
     private val context: Context,
     private val store: BrowserStore,
     private val session: EngineSession,
     private val request: DownloadRequest,
     private val name: String,
     private val acceptedDangerous: Boolean,
+    private val recordDownload: Boolean = true,
     private val finished: (Outcome) -> Unit,
 ) {
     data class Outcome(val error: String? = null, val uri: Uri? = null,
@@ -38,7 +39,8 @@ internal class PwaBlobDownload(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val cancelled = AtomicBoolean(false)
     private val delivered = AtomicBoolean(false)
-    private val temporary = File.createTempFile("pwa-blob-", ".tmp",
+    private val writeLock = Any()
+    private val temporary = File.createTempFile("blob-", ".tmp",
         File(context.cacheDir, "blob_transfers").apply { mkdirs() })
     private var transfer: BlobTransfer? = null
 
@@ -48,9 +50,11 @@ internal class PwaBlobDownload(
         val receiver = object : BlobReceiver {
             override fun onChunk(bytes: ByteArray, acknowledge: (Boolean) -> Unit) {
                 scope.launch(Dispatchers.IO) {
-                    val saved = !cancelled.get() && runCatching {
-                        FileOutputStream(temporary, true).use { it.write(bytes) }
-                    }.isSuccess
+                    val saved = synchronized(writeLock) {
+                        !cancelled.get() && runCatching {
+                            FileOutputStream(temporary, true).use { it.write(bytes) }
+                        }.isSuccess
+                    }
                     withContext(Dispatchers.Main) { acknowledge(saved && !cancelled.get()) }
                 }
             }
@@ -65,7 +69,7 @@ internal class PwaBlobDownload(
             }
             override fun onError(message: String) {
                 if (cancelled.compareAndSet(false, true)) {
-                    temporary.delete()
+                    synchronized(writeLock) { temporary.delete() }
                     report(Outcome(error = message))
                     scope.cancel()
                 }
@@ -85,7 +89,7 @@ internal class PwaBlobDownload(
     private suspend fun save(mimeType: String?): Outcome {
         val mime = mimeType?.takeIf { it.length <= 127 && it.contains('/') }
             ?: request.mimeType?.takeIf { it.length <= 127 && it.contains('/') }
-            ?: "application/octet-stream"
+            ?: if (name.endsWith(".pdf", true)) "application/pdf" else "application/octet-stream"
         if (!acceptedDangerous && DownloadSafety.isDangerous(name, mime))
             return Outcome(error = context.getString(R.string.blob_dangerous_blocked))
         var uri: Uri? = null
@@ -119,7 +123,7 @@ internal class PwaBlobDownload(
             if (context.contentResolver.update(created, values, null, null) <= 0)
                 error(context.getString(R.string.local_file_save_incomplete))
             if (cancelled.get()) error("cancelled")
-            recordId = store.addLocalDownload(LocalDownloadRecord(url = request.url,
+            if (recordDownload) recordId = store.addLocalDownload(LocalDownloadRecord(url = request.url,
                 fileName = name, mimeType = mime, contentUri = created.toString(),
                 createdAt = System.currentTimeMillis()))
             if (cancelled.get()) error("cancelled")
@@ -140,7 +144,7 @@ internal class PwaBlobDownload(
     fun cancel() {
         cancelled.set(true)
         transfer?.cancel()
-        temporary.delete()
+        synchronized(writeLock) { temporary.delete() }
         scope.cancel()
     }
 
