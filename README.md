@@ -76,7 +76,7 @@ Kotlin, Jetpack Compose, Android System WebView로 만드는 Android 웹 브라�
 - [x] **P2 · 화면 미리보기 확대:** 탭 목록·설정·읽기 화면의 실제 UI를 상태와 콜백으로 분리하고 밝음·어두움·큰 글꼴 미리보기를 추가했습니다. Android Studio에서 렌더링을 확인했습니다.
 - [x] **P2 · 큰 파일의 첫 분리:** 일반 탭과 PWA의 `blob:` 다운로드를 `BlobDownloadTask`로, 파일 선택 계약을 `WebFileChooser`로, 사이트 권한의 Android 권한 매핑을 `SitePermissionCoordinator`로 모았습니다.
 - [x] **P2 · 실기기 기본 실행:** Samsung SM-F971N(Android 37, WebView 153)에서 앱을 실행하고, 프로세스 종료 뒤 기존 웹페이지와 URL이 복원되는 것을 확인했습니다.
-- [ ] **P2 · 나머지 구조 분리:** `BrowserController`의 다운로드 화면 상태와 PWA의 세션·권한 상태 관리를 별도 클래스로 옮깁니다.
+- [x] **P2 · 나머지 구조 분리:** `BrowserController`의 다운로드 화면 상태를 `BrowserDownloadCoordinator`로, PWA의 세션 및 권한 상태 관리를 `PwaSessionCoordinator`와 `PwaPermissionCoordinator`로 분리했습니다.
 - [ ] **P2 · 상호작용 실기기 확인:** 런처 바로가기 승인, 실제 사이트의 PWA 업로드·권한·팝업, 파일·PDF·`blob:` 다운로드, 음성 읽기와 번역 모델 다운로드를 기기에서 확인합니다. 앱 내부 전용 PWA Activity는 ADB에서 직접 실행할 수 없어 앱의 사이트 바로가기 흐름으로 확인해야 합니다.
 
 ## Compose 미리보기

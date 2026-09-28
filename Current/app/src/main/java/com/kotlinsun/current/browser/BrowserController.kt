@@ -1,7 +1,6 @@
 package com.kotlinsun.current.browser
 
 import android.app.Activity
-import android.app.DownloadManager
 import android.content.Context
 import android.net.Uri
 import android.os.Handler
@@ -9,9 +8,7 @@ import android.os.Looper
 import android.content.ComponentCallbacks2
 import android.webkit.WebView
 import android.print.PrintDocumentAdapter
-import android.webkit.WebSettings
 import com.kotlinsun.current.R
-import com.kotlinsun.current.BlobDownloadTask
 import com.kotlinsun.current.PageShortcuts
 import com.kotlinsun.current.data.BookmarkRecord
 import com.kotlinsun.current.data.BookmarkFolderRecord
@@ -122,7 +119,6 @@ class BrowserController(
     private var pendingHttpAuthentication: HttpAuthenticationRequest? = null
     private val sitePermissions = SitePermissionCoordinator()
     private val savedPermissions = mutableMapOf<Pair<String, String>, SitePermissionRecord>()
-    private var pendingDownload: Pair<String, DownloadRequest>? = null
     private var pendingFile: Pair<String, FileSelectionRequest>? = null
     private var activeFullScreen: Pair<String, FullScreenRequest>? = null
     private data class ClosedTab(val tab: BrowserTab, val state: ByteArray?)
@@ -134,14 +130,10 @@ class BrowserController(
     private var pendingBookmarkImport: ParsedBookmarkBackup? = null
     private var pendingBookmarkPreview: BookmarkImportPreview? = null
     private var pendingHttpAction: (() -> Unit)? = null
-    private var activeBlob: Pair<String, BlobDownloadTask>? = null
     var awaitingFileResult = false
         private set
     var awaitingPermissionResult = false
         private set
-    private val pendingPdf = mutableMapOf<Long, Boolean>()
-    private var downloadRefreshVersion = 0
-    private val retryingDownloadIds = mutableSetOf<Long>()
     private val approvedHttpRestores = mutableSetOf<String>()
     private val pendingHttpRedirects = mutableMapOf<String, String>()
     private var pendingExternalSessionId: String? = null
@@ -149,8 +141,17 @@ class BrowserController(
     private var privateUnlockGeneration = 0
     private var privateUnlockInFlight = false
     private var pendingClientCertificate: Pair<String, ClientCertificateRequest>? = null
-    private val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-    private val downloadRepository = DownloadRepository(context, store, downloadManager)
+    private val downloadCoordinator = BrowserDownloadCoordinator(
+        context = context,
+        store = store,
+        scope = scope,
+        mutableUi = mutableUi,
+        getHost = { host },
+        isForeground = { foreground },
+        notice = ::notice,
+        getTab = ::tab,
+        getSession = { id -> sessions[id] }
+    )
     private val bookmarkBackupService = BookmarkBackupService(context, store)
     private val tabRestoration = TabRestoration(store)
 
@@ -175,8 +176,7 @@ class BrowserController(
         privateUnlockInFlight = false
         host?.cancelPrivateAuthentication()
         closeFind()
-        activeBlob?.second?.cancel()
-        activeBlob = null
+        downloadCoordinator.cancelActiveBlob()
         exitFullscreen()
         cancelDialog()
         host?.cancelFileSelection()
@@ -386,8 +386,7 @@ class BrowserController(
             closeFind()
             clearSuggestions()
             dismissExternal()
-            activeBlob?.second?.cancel()
-            activeBlob = null
+            downloadCoordinator.cancelActiveBlob()
             cancelDialog()
             host?.cancelFileSelection()
             pendingFile = null
@@ -429,8 +428,7 @@ class BrowserController(
         closeFind()
         clearSuggestions()
         dismissExternal()
-        activeBlob?.second?.cancel()
-        activeBlob = null
+        downloadCoordinator.cancelActiveBlob()
         cancelDialog()
         host?.cancelFileSelection()
         pendingFile = null
@@ -455,8 +453,7 @@ class BrowserController(
             closeFind()
             clearSuggestions()
             dismissExternal()
-            activeBlob?.second?.cancel()
-            activeBlob = null
+            downloadCoordinator.cancelActiveBlob()
             cancelDialog()
             host?.cancelFileSelection()
             pendingFile = null
@@ -489,10 +486,7 @@ class BrowserController(
         if (pendingExternalSessionId == id) dismissExternal()
         if (mutableUi.value.selectedId == id) closeFind()
         if (mutableUi.value.selectedId == id) clearSuggestions()
-        if (activeBlob?.first == id) {
-            activeBlob?.second?.cancel()
-            activeBlob = null
-        }
+        downloadCoordinator.cancelActiveBlob(id)
         val closedState = if (restoreJobs[id] == null)
             sessions[id]?.saveState(256 * 1024) ?: stateCache[id]
         else stateCache[id]
@@ -534,7 +528,7 @@ class BrowserController(
             privateUnlockInFlight = false
             host?.cancelPrivateAuthentication()
             mutableUi.value = mutableUi.value.copy(privateLocked = false)
-            pendingPdf.entries.removeAll { it.value }
+            downloadCoordinator.clearPrivatePendingPdf()
             if (host?.clearPrivateUploadCaptures() == false)
                 notice(context.getString(R.string.private_upload_cleanup_error))
             destroyPrivateProfile()
@@ -1242,10 +1236,7 @@ class BrowserController(
     }
 
     private fun discardSession(id: String, save: Boolean) {
-        if (activeBlob?.first == id) {
-            activeBlob?.second?.cancel()
-            activeBlob = null
-        }
+        downloadCoordinator.cancelActiveBlob(id)
         restoreJobs.remove(id)?.cancel()
         sessionJobs.remove(id)?.cancel()
         val session = sessions.remove(id) ?: return
@@ -1627,192 +1618,18 @@ class BrowserController(
         mutableUi.value = mutableUi.value.copy(page = BrowserPage.WEB)
     }
 
-    fun refreshDownloads() {
-        val version = ++downloadRefreshVersion
-        scope.launch {
-            val result = withContext(Dispatchers.IO) { runCatching { downloadRepository.snapshot() } }
-            if (version != downloadRefreshVersion) return@launch
-            result.onSuccess { snapshot ->
-                mutableUi.value = mutableUi.value.copy(downloads = snapshot.managed,
-                    localDownloads = snapshot.local, missingLocalDownloadIds = snapshot.missingLocalIds,
-                    inaccessibleLocalDownloadIds = snapshot.inaccessibleLocalIds,
-                    downloadError = if (snapshot.managed.any { it.status == DOWNLOAD_STATUS_QUERY_ERROR } ||
-                        snapshot.inaccessibleLocalIds.isNotEmpty())
-                        context.getString(R.string.download_list_partial_error) else null)
-            }.onFailure {
-                mutableUi.value = mutableUi.value.copy(downloadError =
-                    context.getString(R.string.download_list_error))
-            }
-        }
-    }
-
-    fun openDownloadsFolder() { host?.openDownloadsFolder() }
+    fun refreshDownloads() { downloadCoordinator.refreshDownloads() }
+    fun openDownloadsFolder() { downloadCoordinator.openDownloadsFolder() }
     fun openWebViewSettings() { host?.openWebViewSettings() }
-
-    fun requestDeleteDownload(item: DownloadItem) {
-        mutableUi.value = mutableUi.value.copy(dialog = BrowserDialog.DeleteDownload(item.record.id, item.record.fileName))
-    }
-
-    fun retryDownload(item: DownloadItem) {
-        if (item.status != DownloadManager.STATUS_FAILED && item.status != DOWNLOAD_STATUS_MISSING) return
-        if (DownloadSafety.isDangerous(item.record.fileName, item.record.mimeType)) {
-            mutableUi.value = mutableUi.value.copy(dialog = BrowserDialog.RetryDangerousDownload(
-                item.record.id, item.record.fileName))
-            return
-        }
-        retryDownloadApproved(item)
-    }
-
-    private fun retryDownloadApproved(item: DownloadItem) {
-        if (item.status != DownloadManager.STATUS_FAILED && item.status != DOWNLOAD_STATUS_MISSING) return
-        val record = item.record
-        if (!retryingDownloadIds.add(record.id)) return
-        mutableUi.value = mutableUi.value.copy(retryingDownloadIds = retryingDownloadIds.toSet())
-        val request = DownloadRequest(record.url, WebSettings.getDefaultUserAgent(context), null,
-            record.mimeType, -1)
-        enqueueDownload(TabMode.NORMAL, request, downloadRepository.uniqueFileName(record.fileName),
-            retryOriginalId = record.id)
-    }
-
-    fun clearMissingDownloadRecords() {
-        val ids = mutableUi.value.downloads.filter { it.status == DOWNLOAD_STATUS_MISSING }.map { it.record.id }
-        val localIds = mutableUi.value.missingLocalDownloadIds
-        if (ids.isEmpty() && localIds.isEmpty()) return
-        scope.launch {
-            runCatching { withContext(Dispatchers.IO) {
-                ids.forEach {
-                    runCatching { downloadManager.remove(it) }
-                    store.deleteDownload(it)
-                }
-                localIds.forEach { store.deleteLocalDownload(it) }
-            } }
-                .onSuccess { refreshDownloads() }
-                .onFailure { notice(context.getString(R.string.download_missing_cleanup_error)) }
-        }
-    }
-
-    fun requestDeleteLocalDownload(item: LocalDownloadRecord) {
-        mutableUi.value = mutableUi.value.copy(dialog = BrowserDialog.DeleteLocalDownload(item.id, item.fileName))
-    }
-
-    fun openDownload(id: Long) {
-        val item = mutableUi.value.downloads.firstOrNull { it.record.id == id }
-        if (item?.record?.mimeType?.substringBefore(';')?.equals("application/pdf", true) == true ||
-            item?.record?.fileName?.endsWith(".pdf", true) == true) host?.openPdf(id, false)
-        else host?.openDownload(id)
-    }
-
-    fun shareDownload(item: DownloadItem) {
-        if (item.status != DownloadManager.STATUS_SUCCESSFUL) return
-        scope.launch {
-            val uri = withContext(Dispatchers.IO) { runCatching {
-                downloadManager.openDownloadedFile(item.record.id).use { }
-                downloadManager.getUriForDownloadedFile(item.record.id)
-            }.getOrNull() }
-            if (uri == null) notice(context.getString(R.string.download_file_not_found))
-            else host?.shareFile(uri, item.record.mimeType, item.record.fileName)
-        }
-    }
-
-    fun shareLocalDownload(item: LocalDownloadRecord) {
-        if (item.id in mutableUi.value.missingLocalDownloadIds) {
-            notice(context.getString(R.string.download_file_not_found))
-            return
-        }
-        if (item.id in mutableUi.value.inaccessibleLocalDownloadIds) {
-            notice(context.getString(R.string.download_file_access_error))
-            return
-        }
-        val uri = Uri.parse(item.contentUri)
-        scope.launch {
-            val exists = withContext(Dispatchers.IO) { runCatching {
-                context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { true } == true
-            }.getOrDefault(false) }
-            if (!exists) notice(context.getString(R.string.download_file_not_found))
-            else host?.shareFile(uri, item.mimeType, item.fileName)
-        }
-    }
-
-    fun openLocalDownload(item: LocalDownloadRecord) {
-        if (item.id in mutableUi.value.missingLocalDownloadIds) {
-            notice(context.getString(R.string.download_file_not_found))
-            return
-        }
-        if (item.id in mutableUi.value.inaccessibleLocalDownloadIds) {
-            notice(context.getString(R.string.download_file_access_error))
-            return
-        }
-        val mimeType = item.mimeType ?: if (item.fileName.endsWith(".pdf", true))
-            "application/pdf" else null
-        host?.openLocalFile(Uri.parse(item.contentUri), mimeType, false)
-    }
-
-    fun onDownloadComplete(id: Long) {
-        if (id < 0) return
-        refreshDownloads()
-        checkPendingPdf(id, finalEvent = true)
-    }
-
-    private fun checkPendingPdf(id: Long, finalEvent: Boolean = false) {
-        if (id !in pendingPdf) return
-        scope.launch {
-            val status = withContext(Dispatchers.IO) {
-                runCatching { downloadManager.query(DownloadManager.Query().setFilterById(id))?.use {
-                    if (it.moveToFirst()) it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
-                    else null
-                } }.getOrNull()
-            }
-            if (status == DownloadManager.STATUS_PENDING || status == DownloadManager.STATUS_RUNNING ||
-                status == DownloadManager.STATUS_PAUSED) return@launch
-            if (status == null && !finalEvent) {
-                delay(500)
-                checkPendingPdf(id, finalEvent = true)
-                return@launch
-            }
-            val privateMode = pendingPdf.remove(id) ?: return@launch
-            if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                if (foreground) host?.openPdf(id, privateMode)
-            } else notice(context.getString(R.string.pdf_download_incomplete))
-        }
-    }
-
-    private fun deleteDownload(id: Long) {
-        val missingFile = mutableUi.value.downloads.firstOrNull { it.record.id == id }?.status == DOWNLOAD_STATUS_MISSING
-        pendingPdf.remove(id)
-        scope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    if (downloadManager.remove(id) <= 0 && !missingFile)
-                        error("다운로드 파일을 삭제하지 못했습니다.")
-                    store.deleteDownload(id)
-                }
-            }.onSuccess { refreshDownloads() }
-                .onFailure {
-                    refreshDownloads()
-                    notice(context.getString(R.string.download_delete_error))
-                }
-        }
-    }
-
-    private fun deleteLocalDownload(id: Long) {
-        scope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    val record = store.loadLocalDownloads().firstOrNull { it.id == id } ?: return@withContext
-                    val uri = Uri.parse(record.contentUri)
-                    val deleted = context.contentResolver.delete(uri, null, null)
-                    if (deleted <= 0) {
-                        val exists = try {
-                            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { true } == true
-                        } catch (_: java.io.FileNotFoundException) { false }
-                        if (exists) error("파일을 삭제하지 못했습니다.")
-                    }
-                    store.deleteLocalDownload(id)
-                }
-            }.onSuccess { refreshDownloads() }
-                .onFailure { notice(context.getString(R.string.local_download_delete_error)) }
-        }
-    }
+    fun requestDeleteDownload(item: DownloadItem) { downloadCoordinator.requestDeleteDownload(item) }
+    fun retryDownload(item: DownloadItem) { downloadCoordinator.retryDownload(item) }
+    fun clearMissingDownloadRecords() { downloadCoordinator.clearMissingDownloadRecords() }
+    fun requestDeleteLocalDownload(item: LocalDownloadRecord) { downloadCoordinator.requestDeleteLocalDownload(item) }
+    fun openDownload(id: Long) { downloadCoordinator.openDownload(id) }
+    fun shareDownload(item: DownloadItem) { downloadCoordinator.shareDownload(item) }
+    fun shareLocalDownload(item: LocalDownloadRecord) { downloadCoordinator.shareLocalDownload(item) }
+    fun openLocalDownload(item: LocalDownloadRecord) { downloadCoordinator.openLocalDownload(item) }
+    fun onDownloadComplete(id: Long) { downloadCoordinator.onDownloadComplete(id) }
 
     fun requestClearSiteData() { mutableUi.value = mutableUi.value.copy(dialog = BrowserDialog.ClearSiteData) }
 
@@ -1902,7 +1719,9 @@ class BrowserController(
         if ((dialog is BrowserDialog.Download && dialog.dangerous ||
                 dialog is BrowserDialog.RetryDangerousDownload) && !dangerousAccepted) return
         val httpAction = if (dialog is BrowserDialog.HttpNavigation) pendingHttpAction else null
-        when (dialog) {
+        if (dialog != null && downloadCoordinator.confirmDownloadDialog(dialog, dangerousAccepted)) {
+            // Handled by downloadCoordinator
+        } else when (dialog) {
             is BrowserDialog.JavaScript -> pendingJavaScript?.confirm(promptValue)
             is BrowserDialog.HttpAuthentication -> pendingHttpAuthentication?.let { request ->
                 if (!promptValue.isNullOrBlank() && passwordValue != null)
@@ -1912,21 +1731,11 @@ class BrowserController(
             is BrowserDialog.Permission -> {
                 sitePermissions.approve(host)
             }
-            is BrowserDialog.Download -> pendingDownload?.let { (id, request) ->
-                if (request.url.startsWith("blob:", true)) beginBlobDownload(id, request,
-                    dialog.fileName, dangerousAccepted)
-                else tab(id)?.let { enqueueDownload(it.mode, request, dialog.fileName) }
-            }
-            is BrowserDialog.DeleteDownload -> deleteDownload(dialog.id)
-            is BrowserDialog.RetryDangerousDownload -> mutableUi.value.downloads
-                .firstOrNull { it.record.id == dialog.id }?.let(::retryDownloadApproved)
-            is BrowserDialog.DeleteLocalDownload -> deleteLocalDownload(dialog.id)
             BrowserDialog.ClearSiteData -> clearSiteData()
             else -> Unit
         }
         pendingJavaScript = null
         pendingHttpAuthentication = null
-        pendingDownload = null
         pendingHttpAction = null
         mutableUi.value = mutableUi.value.copy(dialog = null)
         httpAction?.invoke()
@@ -1938,7 +1747,7 @@ class BrowserController(
         pendingHttpAuthentication?.cancel()
         pendingHttpAuthentication = null
         sitePermissions.cancel()
-        pendingDownload = null
+        downloadCoordinator.cancelDialog()
         pendingHttpAction = null
         mutableUi.value = mutableUi.value.copy(dialog = null)
     }
@@ -1994,69 +1803,6 @@ class BrowserController(
         }
     }
 
-    private fun enqueueDownload(mode: TabMode, request: DownloadRequest, name: String,
-                                retryOriginalId: Long? = null) {
-        scope.launch {
-            runCatching { withContext(Dispatchers.IO) {
-                downloadRepository.enqueue(mode, request, name, retryOriginalId)
-            } }.onSuccess { (downloadId, cleanupFailed) ->
-                retryOriginalId?.let { retryingDownloadIds.remove(it) }
-                mutableUi.value = mutableUi.value.copy(retryingDownloadIds = retryingDownloadIds.toSet())
-                if (cleanupFailed) notice(context.getString(R.string.download_retry_cleanup_error))
-                if (request.mimeType?.substringBefore(';')?.equals("application/pdf", true) == true ||
-                    name.endsWith(".pdf", true)) {
-                    pendingPdf[downloadId] = mode == TabMode.PRIVATE
-                    checkPendingPdf(downloadId)
-                }
-                refreshDownloads()
-            }.onFailure {
-                retryOriginalId?.let { id -> retryingDownloadIds.remove(id) }
-                mutableUi.value = mutableUi.value.copy(retryingDownloadIds = retryingDownloadIds.toSet())
-                notice(context.getString(R.string.download_start_error,
-                    it.message ?: context.getString(R.string.download_generic_error)))
-            }
-        }
-    }
-
-    private fun beginBlobDownload(id: String, request: DownloadRequest, name: String,
-                                  dangerousAccepted: Boolean) {
-        val session = sessions[id] ?: return
-        if (activeBlob != null) {
-            notice(context.getString(R.string.blob_transfer_start_error))
-            return
-        }
-        val privateMode = tab(id)?.mode == TabMode.PRIVATE
-        lateinit var transfer: BlobDownloadTask
-        transfer = runCatching {
-            BlobDownloadTask(context, store, session, request, name, dangerousAccepted,
-                recordDownload = !privateMode) { outcome ->
-                if (activeBlob?.second === transfer) activeBlob = null
-                when {
-                    outcome.error != null -> notice(outcome.error)
-                    outcome.uri != null -> {
-                        refreshDownloads()
-                        if (outcome.mimeType?.substringBefore(';')?.equals("application/pdf", true) == true &&
-                            foreground) host?.openLocalFile(outcome.uri, outcome.mimeType, privateMode)
-                        else notice(context.getString(R.string.local_download_saved))
-                    }
-                }
-            }
-        }.getOrElse {
-            notice(context.getString(R.string.temp_file_create_error))
-            return
-        }
-        activeBlob = id to transfer
-        runCatching { transfer.start() }.onFailure {
-            transfer.cancel()
-            if (activeBlob?.second === transfer) activeBlob = null
-            notice(context.getString(R.string.blob_transfer_start_error))
-        }
-    }
-
-    private fun safeFileName(request: DownloadRequest): String {
-        return downloadRepository.safeFileName(request)
-    }
-
     override fun onExternalNavigation(sessionId: String, url: String, hasGesture: Boolean) {
         if (sessionId != mutableUi.value.selectedId || !hasGesture) return
         pendingExternalSessionId = sessionId
@@ -2076,10 +1822,7 @@ class BrowserController(
         if (pendingExternalSessionId == sessionId) dismissExternal()
         pendingHttpRedirects.remove(sessionId)
         if (sessionId == mutableUi.value.selectedId) closeFind()
-        if (activeBlob?.first == sessionId) {
-            activeBlob?.second?.cancel()
-            activeBlob = null
-        }
+        downloadCoordinator.cancelActiveBlob(sessionId)
         if (pendingFile?.first == sessionId) {
             host?.cancelFileSelection()
             pendingFile = null
@@ -2087,7 +1830,7 @@ class BrowserController(
         updateTab(sessionId) { it.copy(favicon = null) }
         if (sessionId == mutableUi.value.selectedId &&
             (pendingJavaScript != null || pendingHttpAuthentication != null || sitePermissions.pending != null ||
-                pendingDownload?.first == sessionId))
+                downloadCoordinator.hasPendingDownload(sessionId)))
             cancelDialog()
     }
 
@@ -2225,15 +1968,7 @@ class BrowserController(
 
     override fun onDownload(sessionId: String, request: DownloadRequest) {
         if (sessionId != mutableUi.value.selectedId || mutableUi.value.dialog != null) return
-        if (!isWebUrl(request.url) && !request.url.startsWith("blob:", true)) {
-            notice(context.getString(R.string.download_type_unsupported)); return
-        }
-        val selected = tab(sessionId) ?: return
-        pendingDownload = sessionId to request
-        val name = safeFileName(request)
-        mutableUi.value = mutableUi.value.copy(dialog = BrowserDialog.Download(name,
-            request.url, selected.mode == TabMode.PRIVATE,
-            DownloadSafety.isDangerous(name, request.mimeType)))
+        downloadCoordinator.handleDownloadRequest(sessionId, request)
     }
 
     override fun onPermission(sessionId: String, request: WebPermissionRequest) {

@@ -58,12 +58,15 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import com.kotlinsun.current.browser.DownloadRepository
 import com.kotlinsun.current.browser.DownloadSafety
+import com.kotlinsun.current.browser.Owned
+import com.kotlinsun.current.browser.PwaPermissionCoordinator
+import com.kotlinsun.current.browser.PwaPermissionDecision
+import com.kotlinsun.current.browser.PwaRendererRecovery
+import com.kotlinsun.current.browser.PwaSessionCoordinator
 import com.kotlinsun.current.browser.PwaSupport
 import com.kotlinsun.current.browser.SitePermissionCoordinator
 import com.kotlinsun.current.data.BrowserStore
 import com.kotlinsun.current.data.HistoryRecord
-import com.kotlinsun.current.data.SitePermissionRecord
-import com.kotlinsun.current.engine.BrowserEngine
 import com.kotlinsun.current.engine.ClientCertificateRequest
 import com.kotlinsun.current.engine.DownloadRequest
 import com.kotlinsun.current.engine.EngineCallbacks
@@ -79,13 +82,11 @@ import com.kotlinsun.current.engine.SessionConfig
 import com.kotlinsun.current.engine.TabMode
 import com.kotlinsun.current.engine.WebPermissionKind
 import com.kotlinsun.current.engine.WebPermissionRequest
-import com.kotlinsun.current.engine.webview.WebViewEngine
 import com.kotlinsun.current.ui.theme.CurrentTheme
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
-import java.util.UUID
 import java.io.File
 import java.util.ArrayDeque
 
@@ -106,38 +107,28 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
         data class Script(val owner: String, val request: JavaScriptDialogRequest) : Prompt
         data class HttpAuth(val owner: String, val request: HttpAuthenticationRequest) : Prompt
     }
-    private data class Owned<T>(val owner: String, val value: T)
 
-    private val engine: BrowserEngine = WebViewEngine()
     private val store by lazy { BrowserStore.get(this) }
     private val downloads by lazy {
         DownloadRepository(this, store, getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager)
     }
-    private var mainSession by mutableStateOf<EngineSession?>(null)
-    private var popupSession by mutableStateOf<EngineSession?>(null)
-    private var fullScreen by mutableStateOf<Owned<FullScreenRequest>?>(null)
+    private val sessionCoordinator = PwaSessionCoordinator()
+    private val permissionCoordinator = PwaPermissionCoordinator()
     private var prompt by mutableStateOf<Prompt?>(null)
     private val noticeQueue = ArrayDeque<String>()
     private var themeChoice by mutableStateOf("SYSTEM")
     private var settingsReady by mutableStateOf(false)
-    private var scopeUrl = ""
-    private var currentUrl = ""
     private var appTitle = ""
     private var textZoom = 100
     private var thirdPartyCookies = false
     private var trackingEnabled = false
     private var trackingExceptions = emptySet<String>()
-    private var savedPermissions = emptyMap<Pair<String, String>, SitePermissionRecord>()
     private var pendingFile: Owned<FileSelectionRequest>? = null
     private var filePickerInFlight = false
     private var cameraFile: File? = null
     private var cameraUri: Uri? = null
     private val retainedCaptures = mutableListOf<File>()
-    private var cameraPermissionInFlight = false
     private var uploadChoiceDialog: android.app.AlertDialog? = null
-    private var pendingRuntime: Owned<WebPermissionRequest>? = null
-    private var runtimeInFlight = false
-    private var runtimePermissions: Array<String> = emptyArray()
     private var clientCertificate: Owned<ClientCertificateRequest>? = null
     private var activeBlob: Owned<BlobDownloadTask>? = null
     private val pendingPdf = mutableSetOf<Long>()
@@ -164,21 +155,14 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()) { result ->
-        runtimeInFlight = false
-        val pending = pendingRuntime
-        pendingRuntime = null
-        val requested = runtimePermissions
-        runtimePermissions = emptyArray()
-        if (pending != null) {
-            if (session(pending.owner) != null && requested.isNotEmpty() &&
-                requested.all { result[it] == true }) pending.value.grant()
-            else pending.value.deny()
+        permissionCoordinator.onRuntimePermissionResult(result) { owner ->
+            session(owner) != null
         }
     }
 
     private val cameraPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()) { granted ->
-        cameraPermissionInFlight = false
+        permissionCoordinator.cameraPermissionInFlight = false
         pendingFile?.takeIf { session(it.owner) != null }?.let { pending ->
             launchFilePicker(pending, granted)
         }
@@ -187,15 +171,15 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         filePickerInFlight = savedInstanceState?.getBoolean("file_picker_in_flight") == true
-        runtimeInFlight = savedInstanceState?.getBoolean("runtime_permission_in_flight") == true
-        cameraPermissionInFlight = savedInstanceState?.getBoolean("camera_permission_in_flight") == true
+        permissionCoordinator.runtimeInFlight = savedInstanceState?.getBoolean("runtime_permission_in_flight") == true
+        permissionCoordinator.cameraPermissionInFlight = savedInstanceState?.getBoolean("camera_permission_in_flight") == true
         val start = intent.getStringExtra(EXTRA_START)
         val scope = intent.getStringExtra(EXTRA_SCOPE)
         if (start == null || scope == null || !PwaSupport.withinScope(start, scope)) {
             finish(); return
         }
-        scopeUrl = scope
-        currentUrl = savedInstanceState?.getString("current_url")
+        sessionCoordinator.scopeUrl = scope
+        sessionCoordinator.currentUrl = savedInstanceState?.getString("current_url")
             ?.takeIf { PwaSupport.withinScope(it, scope) } ?: start
         savedInstanceState?.getLongArray("pending_pdf")?.forEach(pendingPdf::add)
         appTitle = intent.getStringExtra(EXTRA_TITLE).orEmpty()
@@ -212,10 +196,10 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
                 trackingEnabled = preferences.trackingProtection
                 trackingExceptions = preferences.trackingExceptions
             }
-            savedPermissions = runCatching { store.loadSitePermissions() }.getOrDefault(emptyList())
-                .associateBy { it.origin to it.kind }
+            val permissions = runCatching { store.loadSitePermissions() }.getOrDefault(emptyList())
+            permissionCoordinator.updateSavedPermissions(permissions)
             settingsReady = true
-            openMain(currentUrl)
+            openMain(sessionCoordinator.currentUrl)
         }
     }
 
@@ -228,13 +212,8 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
     )
 
     private fun openMain(url: String) {
-        val created = runCatching {
-            engine.createSession(this, UUID.randomUUID().toString(), config(scopeUrl), this)
-        }.getOrElse { showNotice(getString(R.string.webview_open_error)); return }
-        mainSession = created
-        runCatching { created.load(url) }.onFailure {
-            mainSession = null
-            created.close()
+        val success = sessionCoordinator.openMain(this, url, config(sessionCoordinator.scopeUrl), this)
+        if (!success) {
             showNotice(getString(R.string.webview_open_error))
         }
     }
@@ -265,13 +244,9 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
         }
     }.getOrNull()
 
-    private fun session(id: String): EngineSession? = when (id) {
-        mainSession?.id -> mainSession
-        popupSession?.id -> popupSession
-        else -> null
-    }
+    private fun session(id: String): EngineSession? = sessionCoordinator.session(id)
 
-    private fun isVisible(id: String): Boolean = id == (popupSession ?: mainSession)?.id
+    private fun isVisible(id: String): Boolean = sessionCoordinator.isVisible(id)
 
     @Composable
     private fun Screen() {
@@ -280,15 +255,15 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
             "LIGHT" -> false
             else -> isSystemInDarkTheme()
         }) {
-            val shown = popupSession ?: mainSession
+            val shown = sessionCoordinator.activeSession
             val state = shown?.state?.collectAsState()?.value
-            val fullscreen = fullScreen
+            val fullscreen = sessionCoordinator.fullScreen
             BackHandler(enabled = true) {
                 when {
                     fullscreen != null -> closeFullscreen()
                     prompt != null -> dismissPrompt()
-                    popupSession != null && shown?.state?.value?.canGoBack == true -> shown.goBack()
-                    popupSession != null -> closePopup()
+                    sessionCoordinator.popupSession != null && shown?.state?.value?.canGoBack == true -> shown.goBack()
+                    sessionCoordinator.popupSession != null -> closePopup()
                     shown?.state?.value?.canGoBack == true -> shown.goBack()
                     else -> finish()
                 }
@@ -302,11 +277,11 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
             else Column(Modifier.fillMaxSize()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
                     IconButton(onClick = {
-                        if (popupSession != null) closePopup()
+                        if (sessionCoordinator.popupSession != null) closePopup()
                         else if (shown?.state?.value?.canGoBack == true) shown.goBack()
                         else finish()
                     }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = getString(R.string.back)) }
-                    val heading = if (popupSession != null) state?.url?.let {
+                    val heading = if (sessionCoordinator.popupSession != null) state?.url?.let {
                         Uri.parse(it).host ?: it
                     } ?: getString(R.string.pwa_popup) else state?.title?.ifBlank { appTitle } ?: appTitle
                     Text(heading, Modifier.weight(1f).padding(top = 12.dp), maxLines = 1,
@@ -314,7 +289,7 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
                     IconButton(onClick = { shown?.reload() }) {
                         Icon(Icons.Filled.Refresh, contentDescription = getString(R.string.reload))
                     }
-                    IconButton(onClick = { if (popupSession != null) closePopup() else finish() }) {
+                    IconButton(onClick = { if (sessionCoordinator.popupSession != null) closePopup() else finish() }) {
                         Icon(Icons.Filled.Close, contentDescription = getString(R.string.close))
                     }
                 }
@@ -442,19 +417,13 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
     }
 
     private fun requestSitePermission(owner: String, request: WebPermissionRequest) {
-        if (session(owner) == null || runtimeInFlight) { request.deny(); return }
-        val permissions = SitePermissionCoordinator.androidPermissions(request.kinds)
-            .filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
-        if (permissions.isEmpty()) { request.grant(); return }
-        pendingRuntime = Owned(owner, request)
-        runtimeInFlight = true
-        runtimePermissions = permissions.toTypedArray()
-        runCatching { permissionLauncher.launch(permissions.toTypedArray()) }.onFailure {
-            runtimeInFlight = false
-            pendingRuntime = null
-            runtimePermissions = emptyArray()
-            request.deny()
-        }
+        permissionCoordinator.requestSitePermission(
+            context = this,
+            owner = owner,
+            request = request,
+            isOwnerAlive = session(owner) != null,
+            launchLauncher = { permissions -> permissionLauncher.launch(permissions) }
+        )
     }
 
     private fun dismissPrompt(showQueued: Boolean = true) {
@@ -494,11 +463,7 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
             clearCameraCapture()
             request?.value?.complete(null)
         }
-        if (pendingRuntime?.owner == owner) {
-            val request = pendingRuntime
-            pendingRuntime = null
-            request?.value?.deny()
-        }
+        permissionCoordinator.cancelForOwner(owner)
         when (val current = prompt) {
             is Prompt.Permission -> if (current.owner == owner) dismissPrompt()
             is Prompt.Script -> if (current.owner == owner) dismissPrompt()
@@ -510,18 +475,11 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
     }
 
     private fun closePopup() {
-        val popup = popupSession ?: return
-        cancelRequests(popup.id)
-        if (fullScreen?.owner == popup.id) closeFullscreen()
-        popupSession = null
-        popup.close()
+        sessionCoordinator.closePopup(::cancelRequests)
     }
 
     private fun closeFullscreen() {
-        val request = fullScreen
-        fullScreen = null
-        request?.value?.close()
-        WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+        sessionCoordinator.closeFullscreen(window)
     }
 
     private fun openInBrowser(url: String) {
@@ -533,9 +491,7 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
     override fun onNavigationStarted(sessionId: String) { cancelRequests(sessionId) }
     override fun onFindResult(sessionId: String, activeIndex: Int, total: Int) = Unit
     override fun onPageFinished(sessionId: String) {
-        if (sessionId == mainSession?.id) mainSession?.state?.value?.url?.let { url ->
-            if (PwaSupport.withinScope(url, scopeUrl)) currentUrl = url
-        }
+        sessionCoordinator.onPageFinished(sessionId)
     }
     override fun onVisited(sessionId: String, url: String, isReload: Boolean) {
         if (!isReload && session(sessionId) != null) lifecycleScope.launch {
@@ -546,40 +502,33 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
     }
     override fun onFavicon(sessionId: String, url: String, icon: ByteArray) = Unit
     override fun onExternalNavigation(sessionId: String, url: String, hasGesture: Boolean) {
-        if (hasGesture && sessionId == (popupSession ?: mainSession)?.id)
+        if (hasGesture && sessionId == (sessionCoordinator.popupSession ?: sessionCoordinator.mainSession)?.id)
             replacePrompt(Prompt.External(sessionId, url))
     }
     override fun onScopeExit(sessionId: String, url: String) {
-        if (sessionId == mainSession?.id) openInBrowser(url)
+        if (sessionId == sessionCoordinator.mainSession?.id) openInBrowser(url)
     }
     override fun onHttpNavigation(sessionId: String, url: String) { openInBrowser(url) }
     override fun onPopupRequested(parentId: String, request: PopupRequest): Boolean {
-        if (popupSession != null || parentId != mainSession?.id) return false
-        val child = runCatching { engine.createSession(this, UUID.randomUUID().toString(),
-            config(null), this) }.getOrNull() ?: return false
-        popupSession = child
-        return runCatching {
-            request.accept(child)
-            true
-        }.getOrElse { popupSession = null; child.close(); false }
+        return sessionCoordinator.onPopupRequested(this, parentId, request, config(null), this)
     }
     override fun onPopupBlocked(parentId: String) { showNotice(getString(R.string.pwa_popup_blocked)) }
     override fun onCloseRequested(sessionId: String) {
-        if (sessionId == popupSession?.id) closePopup()
-        else if (sessionId == mainSession?.id) finish()
+        if (sessionId == sessionCoordinator.popupSession?.id) closePopup()
+        else if (sessionId == sessionCoordinator.mainSession?.id) finish()
     }
     override fun onRendererGone(sessionId: String, session: EngineSession) {
-        cancelRequests(sessionId)
-        if (popupSession === session) { closePopup(); showNotice(getString(R.string.pwa_popup_closed)); return }
-        if (mainSession !== session) { session.close(); return }
-        session.close()
-        mainSession = null
-        closePopup()
-        openMain(currentUrl)
-        if (mainSession != null) showNotice(getString(R.string.pwa_renderer_error))
+        when (sessionCoordinator.handleRendererGone(sessionId, session, ::cancelRequests)) {
+            PwaRendererRecovery.POPUP_CLOSED -> showNotice(getString(R.string.pwa_popup_closed))
+            PwaRendererRecovery.MAIN_CRASHED -> {
+                openMain(sessionCoordinator.currentUrl)
+                if (sessionCoordinator.mainSession != null) showNotice(getString(R.string.pwa_renderer_error))
+            }
+            PwaRendererRecovery.IGNORED -> Unit
+        }
     }
     override fun onFileSelection(sessionId: String, request: FileSelectionRequest) {
-        if (!isVisible(sessionId) || filePickerInFlight || cameraPermissionInFlight ||
+        if (!isVisible(sessionId) || filePickerInFlight || permissionCoordinator.cameraPermissionInFlight ||
             pendingFile != null) {
             request.complete(null); return
         }
@@ -588,9 +537,9 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
         val cameraEligible = WebFileChooser.cameraEligible(request)
         if (cameraEligible && ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
             PackageManager.PERMISSION_GRANTED) {
-            cameraPermissionInFlight = true
+            permissionCoordinator.cameraPermissionInFlight = true
             runCatching { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) }.onFailure {
-                cameraPermissionInFlight = false
+                permissionCoordinator.cameraPermissionInFlight = false
                 launchFilePicker(pending, false)
             }
         } else launchFilePicker(pending, cameraEligible)
@@ -658,14 +607,11 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
     }
     override fun onFullScreen(sessionId: String, request: FullScreenRequest) {
         if (!isVisible(sessionId)) { request.close(); return }
-        closeFullscreen()
-        fullScreen = Owned(sessionId, request)
-        WindowInsetsControllerCompat(window, window.decorView).hide(WindowInsetsCompat.Type.systemBars())
+        sessionCoordinator.setFullscreen(sessionId, request, window)
     }
     override fun onFullScreenClosed(sessionId: String) {
-        if (fullScreen?.owner == sessionId) {
-            fullScreen = null
-            WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+        if (sessionCoordinator.fullScreen?.owner == sessionId) {
+            sessionCoordinator.closeFullscreen(window)
         }
     }
     override fun onLinkLongPress(sessionId: String, target: LinkTarget) = Unit
@@ -756,23 +702,20 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
         }
     }
     override fun onPermission(sessionId: String, request: WebPermissionRequest) {
-        val origin = SitePermissionCoordinator.canonicalOrigin(request.origin)
-        if (!isVisible(sessionId) || runtimeInFlight || prompt != null || origin == null) {
-            request.deny(); return
+        when (permissionCoordinator.evaluatePermission(
+            sessionId = sessionId,
+            request = request,
+            isVisible = isVisible(sessionId),
+            hasActivePrompt = prompt != null
+        )) {
+            PwaPermissionDecision.DENIED -> Unit
+            PwaPermissionDecision.DIRECT_REQUEST -> requestSitePermission(sessionId, request)
+            PwaPermissionDecision.PROMPT_NEEDED -> replacePrompt(Prompt.Permission(sessionId, request))
         }
-        val decisions = request.kinds.map { savedPermissions[origin to it.name] }
-        if (decisions.any { it?.allowed == false }) { request.deny(); return }
-        if (decisions.all { it?.allowed == true }) {
-            requestSitePermission(sessionId, request); return
-        }
-        replacePrompt(Prompt.Permission(sessionId, request))
     }
     override fun onPermissionCanceled(sessionId: String, request: WebPermissionRequest) {
         if ((prompt as? Prompt.Permission)?.request === request) dismissPrompt()
-        if (pendingRuntime?.value === request) {
-            pendingRuntime = null
-            request.deny()
-        }
+        permissionCoordinator.onPermissionCanceled(request)
     }
     override fun onHttpAuthentication(sessionId: String, request: HttpAuthenticationRequest) {
         if (!isVisible(sessionId)) request.cancel()
@@ -814,23 +757,21 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
 
     override fun onPause() {
         foreground = false
-        popupSession?.pause()
-        mainSession?.pause()
+        sessionCoordinator.onPause()
         super.onPause()
     }
     override fun onResume() {
         super.onResume()
         foreground = true
         pendingPdf.toList().forEach { checkPdf(it, false) }
-        mainSession?.resume()
-        popupSession?.resume()
+        sessionCoordinator.onResume()
     }
     override fun onSaveInstanceState(outState: Bundle) {
-        outState.putString("current_url", currentUrl)
+        outState.putString("current_url", sessionCoordinator.currentUrl)
         outState.putLongArray("pending_pdf", pendingPdf.toLongArray())
         outState.putBoolean("file_picker_in_flight", filePickerInFlight)
-        outState.putBoolean("runtime_permission_in_flight", runtimeInFlight)
-        outState.putBoolean("camera_permission_in_flight", cameraPermissionInFlight)
+        outState.putBoolean("runtime_permission_in_flight", permissionCoordinator.runtimeInFlight)
+        outState.putBoolean("camera_permission_in_flight", permissionCoordinator.cameraPermissionInFlight)
         super.onSaveInstanceState(outState)
     }
     override fun onDestroy() {
@@ -844,16 +785,12 @@ class WebAppActivity : ComponentActivity(), EngineCallbacks {
         pendingFile?.value?.complete(null)
         pendingFile = null
         clearCameraCapture()
-        pendingRuntime?.value?.deny()
-        pendingRuntime = null
+        permissionCoordinator.clear()
         activeBlob?.value?.cancel()
         activeBlob = null
         clientCertificate?.value?.cancel()
         clientCertificate = null
-        closeFullscreen()
-        closePopup()
-        mainSession?.close()
-        mainSession = null
+        sessionCoordinator.destroy(::cancelRequests, window)
         retainedCaptures.forEach { runCatching { it.delete() } }
         retainedCaptures.clear()
         super.onDestroy()
